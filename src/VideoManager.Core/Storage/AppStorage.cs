@@ -5,9 +5,13 @@ using VideoManager.Core.Models;
 
 namespace VideoManager.Core.Storage;
 
-/// <summary>配置 + 轻量缓存（JSON）。全部放在 %LOCALAPPDATA%\VideoManager。</summary>
+/// <summary>配置 + 轻量缓存（JSON）。默认放在程序（exe）所在目录，跟着程序走。</summary>
 public sealed class AppStorage
 {
+    /// <summary>老版本的存放位置（%LOCALAPPDATA%\VideoManager），仅用于一次性搬家。</summary>
+    private static string LegacyDataDirectory => System.IO.Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VideoManager");
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
@@ -28,11 +32,105 @@ public sealed class AppStorage
 
     public AppStorage(string? dataDirectory = null)
     {
-        DataDirectory = dataDirectory ?? System.IO.Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VideoManager");
+        var preferred = dataDirectory is { Length: > 0 } dir
+            ? dir
+            : AppContext.BaseDirectory.TrimEnd(
+                System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar);
+
+        DataDirectory = preferred;
         CoverDirectory = System.IO.Path.Combine(DataDirectory, "covers");
-        Directory.CreateDirectory(DataDirectory);
-        Directory.CreateDirectory(CoverDirectory);
+
+        if (TryPrepare(DataDirectory, CoverDirectory))
+        {
+            if (dataDirectory is null)
+            {
+                MigrateLegacyData();
+            }
+            return;
+        }
+
+        // 程序目录不可写（例如装在 Program Files 下、或 U 盘只读），退回老位置，至少还能用
+        DataDirectory = LegacyDataDirectory;
+        CoverDirectory = System.IO.Path.Combine(DataDirectory, "covers");
+        TryPrepare(DataDirectory, CoverDirectory);
+    }
+
+    private static bool TryPrepare(string dataDirectory, string coverDirectory)
+    {
+        try
+        {
+            Directory.CreateDirectory(dataDirectory);
+            Directory.CreateDirectory(coverDirectory);
+
+            // 目录存在不代表能写（Program Files），实写一次最保险
+            var probe = System.IO.Path.Combine(dataDirectory, ".write-test");
+            File.WriteAllText(probe, "");
+            File.Delete(probe);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 老版本把数据放在 %LOCALAPPDATA%\VideoManager，新版改到程序目录。
+    /// 首次以新位置启动时把老数据整份搬过来 —— 只在「新位置还没有配置」时搬，避免覆盖用户后来的改动。
+    /// </summary>
+    private void MigrateLegacyData()
+    {
+        try
+        {
+            var legacy = LegacyDataDirectory;
+            if (!Directory.Exists(legacy))
+            {
+                return;
+            }
+
+            if (string.Equals(
+                    System.IO.Path.GetFullPath(legacy).TrimEnd('\\'),
+                    System.IO.Path.GetFullPath(DataDirectory).TrimEnd('\\'),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            var legacySettings = System.IO.Path.Combine(legacy, "settings.json");
+            if (!File.Exists(legacySettings) || File.Exists(SettingsFile))
+            {
+                return;
+            }
+
+            File.Copy(legacySettings, SettingsFile, overwrite: false);
+
+            var legacyCache = System.IO.Path.Combine(legacy, "library-cache.json");
+            if (File.Exists(legacyCache))
+            {
+                File.Copy(legacyCache, CacheFile, overwrite: false);
+            }
+
+            var legacyCovers = System.IO.Path.Combine(legacy, "covers");
+            if (Directory.Exists(legacyCovers))
+            {
+                foreach (var source in Directory.GetFiles(legacyCovers, "*.jpg"))
+                {
+                    try
+                    {
+                        var target = System.IO.Path.Combine(CoverDirectory, System.IO.Path.GetFileName(source));
+                        File.Copy(source, target, overwrite: false);
+                    }
+                    catch
+                    {
+                        // 单张封面失败无所谓，回头会重新抓
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // 搬家失败不影响启动，最坏情况是重新扫一遍
+        }
     }
 
     public AppSettings LoadSettings()

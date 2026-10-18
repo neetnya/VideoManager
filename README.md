@@ -87,17 +87,22 @@ dotnet build VideoManager.sln -c Release
 
 ## 数据与配置
 
-全部数据在 `%LOCALAPPDATA%\VideoManager\`：
+全部数据就在**程序所在的文件夹**（`VideoManager.exe` 旁边）：
 
 | 文件 | 内容 |
 | --- | --- |
 | `settings.json` | 根目录列表、显示名覆盖、自定义封面、播放记录、ffmpeg 路径、窗口状态等 |
-| `library-cache.json` | 上次扫描结果（启动时先秒开，超 6 小时或手动 F5 才重扫） |
+| `library-cache.json` | 上次扫描结果（每次启动都会自动重扫，这份是留给「路径暂时不可达」时兜底） |
 | `covers\*.jpg` | 抽取的封面缓存（文件名是作品 key 的 SHA1 前 20 位） |
+
+这样整个文件夹拷到 U 盘或另一台机器，配置和封面都跟着走，不用再搬数据。
+
+从老版本（数据放在 `%LOCALAPPDATA%\VideoManager\`）升级上来的，第一次启动时会把
+`settings.json` / `library-cache.json` / `covers\*.jpg` 自动搬到程序目录；老数据原样保留不删。
 
 设置页里可以一键「清空并重抓」全部封面，也可以打开数据目录。
 
-卸载 / 重置：直接删掉 `%LOCALAPPDATA%\VideoManager` 即可，硬盘上的视频一个都不会动。
+卸载 / 重置：直接删掉程序目录里的 `settings.json`、`library-cache.json` 和 `covers\` 即可，硬盘上的视频一个都不会动。
 
 ---
 

@@ -550,9 +550,12 @@
                                     Padding="18" Margin="0,14,0,0">
                                 <StackPanel>
                                     <TextBlock Text="数据位置" FontSize="14" FontWeight="SemiBold" />
+                                    <TextBlock Text="配置、缓存和封面都存在程序所在的文件夹里，整个文件夹拷走就能换电脑。"
+                                               FontSize="11.5" Foreground="{StaticResource TextDimBrush}"
+                                               TextWrapping="Wrap" Margin="0,6,0,8" />
                                     <TextBlock Text="{Binding LibraryPath}" FontSize="11.5"
                                                Foreground="{StaticResource TextDimBrush}"
-                                               TextWrapping="Wrap" Margin="0,8,0,12" />
+                                               TextWrapping="Wrap" Margin="0,0,0,12" />
                                     <Button Content="打开文件夹" Style="{StaticResource FlatButton}"
                                             HorizontalAlignment="Left"
                                             Command="{Binding RevealLibraryCommand}" />
