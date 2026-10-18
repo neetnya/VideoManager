@@ -173,8 +173,8 @@ public static class LibraryScanner
             FileName = Path.GetFileName(file),
             FolderPath = folder,
             RootPath = root.Path,
-            ShowTitle = parsed.ShowTitle,
-            EpisodeTitle = parsed.EpisodeTitle,
+            ShowTitle = ChineseConverter.ToSimplified(parsed.ShowTitle),
+            EpisodeTitle = ChineseConverter.ToSimplified(parsed.EpisodeTitle),
             Season = season,
             Episode = parsed.Episode,
             SpecialNumber = parsed.SpecialNumber,
@@ -185,8 +185,11 @@ public static class LibraryScanner
         };
     }
 
-    /// <summary>挑一个最像「剧名」的候选。</summary>
+    /// <summary>挑一个最像「剧名」的候选，并把繁体字形统一成简体。</summary>
     private static string ChooseTitle(string folderName, string? parsedTitle, bool folderIsRoot)
+        => ChineseConverter.ToSimplified(ChooseTitleCore(folderName, parsedTitle, folderIsRoot));
+
+    private static string ChooseTitleCore(string folderName, string? parsedTitle, bool folderIsRoot)
     {
         var folder = (folderName ?? "").Trim();
         if (string.IsNullOrWhiteSpace(folder))
@@ -276,8 +279,10 @@ public static class LibraryScanner
 
     public static string NormalizeTitle(string title)
     {
-        var sb = new System.Text.StringBuilder(title.Length);
-        foreach (var c in title)
+        // 先统一字形再比较，否则「偵探」和「侦探」会被当成两部不同的作品。
+        var simplified = ChineseConverter.ToSimplified(title);
+        var sb = new System.Text.StringBuilder(simplified.Length);
+        foreach (var c in simplified)
         {
             if (char.IsLetterOrDigit(c))
             {
@@ -334,9 +339,10 @@ public static class LibraryScanner
             if (Titles.Count == 0)
             {
                 var n = Path.GetFileName(FolderPath.TrimEnd('\\', '/'));
-                return string.IsNullOrWhiteSpace(n) ? "未命名" : n;
+                return ChineseConverter.ToSimplified(string.IsNullOrWhiteSpace(n) ? "未命名" : n);
             }
-            return Titles.OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key.Length).First().Key;
+            return ChineseConverter.ToSimplified(
+                Titles.OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key.Length).First().Key);
         }
 
         public Series ToSeries()

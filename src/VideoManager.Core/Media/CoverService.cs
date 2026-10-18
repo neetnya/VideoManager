@@ -109,7 +109,12 @@ public sealed class CoverService
     /// <summary>
     /// 从视频抽一帧存为 JPG。成功返回 true。
     /// </summary>
-    public bool ExtractCover(string videoPath, string outputJpg, int width, double ratio = 0.33, CancellationToken token = default)
+    /// <param name="variant">
+    /// 第几次重抓。0 = 默认位置；每次 +1 会换一个完全不同的时间点，
+    /// 否则「重抓封面」永远抽到同一帧，看起来像没生效。
+    /// </param>
+    public bool ExtractCover(string videoPath, string outputJpg, int width, double ratio = 0.33,
+        CancellationToken token = default, int variant = 0)
     {
         if (FfmpegPath is null) return false;
 
@@ -119,11 +124,25 @@ public sealed class CoverService
         var timestamps = new List<double>();
         if (duration is > 1)
         {
-            var t = Math.Max(1.0, duration.Value * Math.Clamp(ratio, 0.05, 0.9));
-            timestamps.Add(t);
-            timestamps.Add(Math.Max(1.0, duration.Value * 0.15));
-            timestamps.Add(Math.Max(0.5, duration.Value * 0.5));
-            timestamps.Add(3.0);
+            var dur = duration.Value;
+            if (variant <= 0)
+            {
+                timestamps.Add(Math.Max(1.0, dur * Math.Clamp(ratio, 0.05, 0.9)));
+                timestamps.Add(Math.Max(1.0, dur * 0.15));
+                timestamps.Add(Math.Max(0.5, dur * 0.5));
+                timestamps.Add(3.0);
+            }
+            else
+            {
+                // 用黄金分割比在时间轴上跳点：连续重抓会依次落到
+                // 约 10%、48%、86%、34%、72% … 的位置，几乎不会重复。
+                var offset = (variant * 0.381_966_011_25) % 0.8;
+                for (var k = 0; k < 4; k++)
+                {
+                    var fraction = 0.1 + ((offset + k * 0.25) % 0.8);
+                    timestamps.Add(Math.Max(0.5, Math.Min(dur - 0.5, dur * fraction)));
+                }
+            }
         }
         else
         {
@@ -131,7 +150,7 @@ public sealed class CoverService
             timestamps.Add(1.0);
         }
 
-        foreach (var ts in timestamps)
+        foreach (var ts in timestamps.Distinct())
         {
             token.ThrowIfCancellationRequested();
             var tmp = outputJpg + ".tmp.jpg";

@@ -103,6 +103,22 @@ public sealed class AppStorage
         }
     }
 
+    /// <summary>丢弃缓存文件（解析规则升级后旧标题不可再用）。</summary>
+    public void ClearCache()
+    {
+        try
+        {
+            if (File.Exists(CacheFile))
+            {
+                File.Delete(CacheFile);
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+    }
+
     /// <summary>封面文件名：以剧集 Key 的哈希命名，避免非法字符。</summary>
     public string CoverPathFor(string seriesKey)
     {

@@ -12,6 +12,15 @@ var paths = new[]
     @"D:\Anime",
 };
 
+if (args.Length > 0 && args[0] == "conv")
+{
+    foreach (var name in args.Skip(1))
+    {
+        Console.WriteLine($"{name} -> {VideoManager.Core.Util.ChineseConverter.ToSimplified(name)}");
+    }
+    return;
+}
+
 if (args.Length > 0 && args[0] == "parse")
 {
     foreach (var name in args.Skip(1))
@@ -28,11 +37,18 @@ if (args.Length > 1 && args[0] == "cover")
     Console.WriteLine($"ffmpeg={svc.FfmpegPath} ffprobe={svc.FfprobePath}");
     var video = args[1];
     var outPath = args.Length > 2 ? args[2] : Path.Combine(Path.GetTempPath(), "vm-cover-test.jpg");
-    var sw = System.Diagnostics.Stopwatch.StartNew();
     var d = svc.ProbeDuration(video);
     Console.WriteLine($"duration={d}");
-    var ok = svc.ExtractCover(video, outPath, 480);
-    Console.WriteLine($"cover ok={ok} -> {outPath} ({sw.ElapsedMilliseconds} ms, {new FileInfo(outPath).Length} bytes)");
+    for (var variant = 0; variant < 4; variant++)
+    {
+        var target = Path.Combine(Path.GetDirectoryName(outPath)!,
+            Path.GetFileNameWithoutExtension(outPath) + $"-v{variant}.jpg");
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var ok = svc.ExtractCover(video, target, 480, 0.33, default, variant);
+        var len = File.Exists(target) ? new FileInfo(target).Length : 0;
+        var hash = len > 0 ? Convert.ToHexString(System.Security.Cryptography.SHA1.HashData(File.ReadAllBytes(target)))[..12] : "-";
+        Console.WriteLine($"  variant={variant} ok={ok} {len} bytes sha={hash} ({sw.ElapsedMilliseconds} ms)");
+    }
     return;
 }
 

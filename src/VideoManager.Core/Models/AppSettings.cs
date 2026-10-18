@@ -37,10 +37,19 @@ public sealed class AppSettings
     public double WindowHeight { get; set; } = 860;
     public double WindowLeft { get; set; } = double.NaN;
     public double WindowTop { get; set; } = double.NaN;
-    public bool WindowMaximized { get; set; }
+    public bool WindowMaximized { get; set; } = true;
 
     /// <summary>上次扫描时间。</summary>
     public DateTime? LastScanUtc { get; set; }
+
+    /// <summary>
+    /// 解析规则版本。与 <see cref="CurrentCacheVersion"/> 不一致时缓存作废、强制重扫，
+    /// 避免旧缓存里的繁体标题一直留在界面上。
+    /// </summary>
+    public int CacheVersion { get; set; }
+
+    /// <summary>当前的解析规则版本。改动标题/集数解析逻辑时 +1。</summary>
+    public const int CurrentCacheVersion = 2;
 
     /// <summary>卡片大小预设：Small / Medium / Large。</summary>
     public string CardSize { get; set; } = "Medium";

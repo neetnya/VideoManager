@@ -24,35 +24,34 @@ public sealed class MediaFile
     public DateTime ModifiedUtc { get; init; }
 
     /// <summary>显示用标题：优先本集标题，其次从文件名里剥出来的干净名字，最后「第 N 集」。</summary>
-    public string DisplayName
+    public string DisplayName => Util.ChineseConverter.ToSimplified(ComputeDisplayName());
+
+    private string ComputeDisplayName()
     {
-        get
+        if (!string.IsNullOrWhiteSpace(EpisodeTitle))
         {
-            if (!string.IsNullOrWhiteSpace(EpisodeTitle))
-            {
-                return EpisodeTitle!;
-            }
-            if (IsSpecial && SpecialNumber is > 0)
-            {
-                return $"特别篇 {SpecialNumber}";
-            }
-
-            // 文件名里的 [字幕组][分辨率][编码] 之类对用户没意义。剥掉标签、
-            // 再去掉「剧名前缀 + 集数尾巴」，剩下的才是真正值得显示的东西。
-            var cleaned = StripTags(Path.GetFileNameWithoutExtension(FileName));
-            cleaned = TrimPrefix(cleaned, ShowTitle);
-            cleaned = OnlyEpisodeCode.IsMatch(cleaned) ? string.Empty : cleaned;
-
-            if (cleaned.Length >= 2)
-            {
-                return cleaned;
-            }
-            if (Episode is > 0)
-            {
-                return $"第 {Episode} 集";
-            }
-            return Path.GetFileNameWithoutExtension(FileName);
+            return EpisodeTitle!;
         }
+        if (IsSpecial && SpecialNumber is > 0)
+        {
+            return $"特别篇 {SpecialNumber}";
+        }
+
+        // 文件名里的 [字幕组][分辨率][编码] 之类对用户没意义。剥掉标签、
+        // 再去掉「剧名前缀 + 集数尾巴」，剩下的才是真正值得显示的东西。
+        var cleaned = StripTags(Path.GetFileNameWithoutExtension(FileName));
+        cleaned = TrimPrefix(cleaned, ShowTitle);
+        cleaned = OnlyEpisodeCode.IsMatch(cleaned) ? string.Empty : cleaned;
+
+        if (cleaned.Length >= 2)
+        {
+            return cleaned;
+        }
+        if (Episode is > 0)
+        {
+            return $"第 {Episode} 集";
+        }
+        return Path.GetFileNameWithoutExtension(FileName);
     }
 
     /// <summary>S02E59 / 01 / 01v2 / E03 这种纯集数记号。</summary>
@@ -95,6 +94,10 @@ public sealed class MediaFile
         {
             return text;
         }
+
+        // 剧名可能已经被转成简体，而文件名还是繁体，比较前先统一字形。
+        text = Util.ChineseConverter.ToSimplified(text);
+        prefix = Util.ChineseConverter.ToSimplified(prefix);
 
         var p = 0;
         var t = 0;
