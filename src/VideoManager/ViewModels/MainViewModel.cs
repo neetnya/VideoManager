@@ -20,6 +20,9 @@ public sealed class MainViewModel : ObservableObject
     private readonly Dispatcher _dispatcher;
 
     private CancellationTokenSource? _coverCts;
+
+    /// <summary>重抓封面的次数计数，用来轮换抽帧时间点。</summary>
+    private int _coverVariant;
     private string _searchText = "";
     private string _statusText = "准备就绪";
     private bool _isBusy;
@@ -315,6 +318,17 @@ public sealed class MainViewModel : ObservableObject
 
     public async Task StartupAsync()
     {
+        var settings = _host.Settings;
+
+        // 解析规则变了（例如繁体转简体），旧缓存里的标题就过期了，必须重扫一次。
+        if (settings.CacheVersion != AppSettings.CurrentCacheVersion)
+        {
+            _host.Storage.ClearCache();
+            settings.CacheVersion = AppSettings.CurrentCacheVersion;
+            settings.LastScanUtc = null;
+            _host.Save();
+        }
+
         // 首次运行：把三个参考路径预填进去也没意义，让用户自己导入。
         var cached = _host.Storage.LoadCache();
         if (cached.Count > 0)
@@ -325,13 +339,13 @@ public sealed class MainViewModel : ObservableObject
 
         SyncRoots();
 
-        if (_host.Settings.Roots.Count > 0 && (cached.Count == 0 || ShouldAutoRescan()))
+        if (settings.Roots.Count > 0 && (cached.Count == 0 || ShouldAutoRescan()))
         {
             await ScanAsync();
         }
         else
         {
-            StatusText = _host.Settings.Roots.Count == 0
+            StatusText = settings.Roots.Count == 0
                 ? "还没有添加路径 —— 点「+ 添加路径」开始"
                 : $"共 {Cards.Count} 部作品";
         }
@@ -613,19 +627,29 @@ public sealed class MainViewModel : ObservableObject
         }
 
         var target = _host.Storage.CoverPathFor(card.Key);
-        if (force && File.Exists(target))
+
+        // 重抓时换一个时间点：同一个视频固定抽 ratio 位置必然得到同一帧。
+        var variant = 0;
+        if (force)
         {
-            try { File.Delete(target); } catch { }
+            variant = Interlocked.Increment(ref _coverVariant) & 0xFFFF;
+            if (File.Exists(target))
+            {
+                try { File.Delete(target); } catch { }
+            }
         }
 
-        StatusText = $"正在抓「{card.Title}」的封面……";
+        StatusText = force ? $"正在换个时间点重抓「{card.Title}」的封面……" : $"正在抓「{card.Title}」的封面……";
         var ok = await Task.Run(() => svc.ExtractCover(card.FirstFile.FullPath, target,
-            _host.Settings.CoverWidth, _host.Settings.CoverFrameRatio));
+            _host.Settings.CoverWidth, _host.Settings.CoverFrameRatio, default, variant));
 
         if (ok)
         {
+            // 同一个文件路径写入了新画面，WPF 的位图缓存会继续显示旧图，必须先失效。
+            ImagePathToSourceConverter.Invalidate(target);
             card.Series.CoverPath = target;
             card.UpdateCover(target);
+            card.RefreshCover();
             StatusText = "封面换好了";
             _dispatcher.Invoke(() => Raise(nameof(SelectedCoverPath), nameof(SelectedHasCover), nameof(CoverCacheInfo)));
             SaveCache();
@@ -716,7 +740,6 @@ public sealed class MainViewModel : ObservableObject
     {
         if (ep is null) return;
         PlayEpisodeFile(ep.File);
-        ep.Watched = true;
     }
 
     private void PlayEpisodeFile(MediaFile file)
@@ -730,7 +753,8 @@ public sealed class MainViewModel : ObservableObject
         var ok = PlayerLauncher.Play(file.FullPath);
         StatusText = ok ? $"正在播放 {file.DisplayName}" : "没能叫起播放器";
 
-        _host.Settings.Watched[file.FullPath] = DateTime.UtcNow.Ticks;
+        // 只记「最近打开」，不记「已看」：外部播放器可能自动连播下一集，
+        // 我们无法知道用户真正看到了哪，标错了就是撒谎。已看交给手动 ✓。
         _host.Settings.Recent.RemoveAll(p => string.Equals(p, file.FullPath, StringComparison.OrdinalIgnoreCase));
         _host.Settings.Recent.Insert(0, file.FullPath);
         if (_host.Settings.Recent.Count > 60)
@@ -738,14 +762,6 @@ public sealed class MainViewModel : ObservableObject
             _host.Settings.Recent.RemoveRange(60, _host.Settings.Recent.Count - 60);
         }
         _host.Save();
-
-        foreach (var e in Episodes)
-        {
-            if (string.Equals(e.FullPath, file.FullPath, StringComparison.OrdinalIgnoreCase))
-            {
-                e.Watched = true;
-            }
-        }
 
         if (IsRecent) CardsView.Refresh();
     }

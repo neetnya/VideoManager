@@ -62,10 +62,9 @@ public partial class MainWindow : Window
         Left = Math.Min(Math.Max(left, work.Left), Math.Max(work.Left, work.Right - Width));
         Top = Math.Min(Math.Max(top, work.Top), Math.Max(work.Top, work.Bottom - Height));
 
-        if (s.WindowMaximized)
-        {
-            WindowState = WindowState.Maximized;
-        }
+        // 默认就是最大化：用户上次怎么退出不重要，打开就该铺满屏幕。
+        // 同时把 Normal 状态的还原尺寸算好，取消最大化时不会变成奇怪的大小。
+        WindowState = WindowState.Maximized;
 
         SearchBox.Focus();
     }

@@ -62,6 +62,24 @@ public sealed class ImagePathToSourceConverter : IValueConverter
         => throw new NotSupportedException();
 
     public static void Clear() => Cache.Clear();
+
+    /// <summary>让某个文件的所有缓存尺寸失效（封面被重写后必须调用，否则界面还是旧图）。</summary>
+    public static void Invalidate(string path)
+    {
+        if (string.IsNullOrEmpty(path))
+        {
+            return;
+        }
+
+        var prefix = path + "|";
+        foreach (var key in Cache.Keys)
+        {
+            if (key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                Cache.TryRemove(key, out _);
+            }
+        }
+    }
 }
 
 public sealed class BoolToVisibilityConverter : IValueConverter

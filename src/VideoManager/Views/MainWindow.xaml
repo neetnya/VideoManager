@@ -257,16 +257,16 @@
                                Margin="9,0,0,0" VerticalAlignment="Center" />
                 </StackPanel>
 
-                <!-- 搜索 -->
-                <Grid Grid.Column="1" MaxWidth="520" Margin="60,0,60,0" VerticalAlignment="Center"
+                <!-- 搜索：单独横跨三列居中，才不会因为左右两列宽度不等而偏向一边 -->
+                <Grid Grid.Column="0" Grid.ColumnSpan="3" Width="440" VerticalAlignment="Center"
                       HorizontalAlignment="Center">
-                    <TextBlock Text="🔍" FontSize="12" Margin="12,0,0,0"
-                               VerticalAlignment="Center" HorizontalAlignment="Left"
-                               Foreground="{StaticResource TextFaintBrush}"
-                               IsHitTestVisible="False" />
                     <TextBox x:Name="SearchBox" Style="{StaticResource SearchBox}"
                              Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged, Delay=120}"
                              shell:WindowChrome.IsHitTestVisibleInChrome="True" />
+                    <TextBlock Text="🔍" FontSize="12" Margin="13,0,0,0"
+                               VerticalAlignment="Center" HorizontalAlignment="Left"
+                               Foreground="{StaticResource TextFaintBrush}"
+                               IsHitTestVisible="False" />
                     <TextBlock Text="搜作品、文件名…" FontSize="12.5" Margin="34,0,0,0"
                                VerticalAlignment="Center" HorizontalAlignment="Left"
                                Foreground="{StaticResource TextFaintBrush}"
@@ -645,7 +645,7 @@
                                                 Command="{Binding RevealCommand}"
                                                 CommandParameter="{Binding SelectedCard}" />
                                     </StackPanel>
-                                    <TextBlock Text="双击标题可改名 · 点单集右侧 ✓ 标记看过"
+                                    <TextBlock Text="双击标题可改名 · 播放不会自动标记，看完点右侧 ✓ 记一笔"
                                                FontSize="10.5" Foreground="{StaticResource TextFaintBrush}"
                                                Margin="2,10,0,0" />
                                 </StackPanel>

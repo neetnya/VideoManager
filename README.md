@@ -35,6 +35,7 @@ dotnet build VideoManager.sln -c Release
   - `[ANi] 世界最強的魔女，就此開始 - 01 [1080P][Baha][WEB-DL].mp4` → 《世界最強的魔女，就此開始》第 1 集
   - `【FSD粉羽社】名侦探光之美少女[36][v2][试炼的金牌].mp4` → 第 36 集，集标题「试炼的金牌」
   - 季目录 `S2` / `Season 3` / `第二季` 里的纯集数文件（`S02E59.mp4`、`01.mp4`）会归到对应的季
+  - 繁体标题自动转简体（只换字形，不换用词）：`碧藍航線` → `碧蓝航线`、`學生會也有洞！` → `学生会也有洞！`；日文汉字与异体字（如「古畑」）原样保留
   - 支持 mp4 / mkv / avi / ts / m2ts / mov / wmv / flv / webm / m4v / rmvb / mpg 等 20 余种容器
 - **改名**：详情抽屉里双击标题，或在卡片右键菜单里改；只改库内显示名，不动硬盘文件。
 - **手动换封面**：右键卡片 →「换一张封面…」选本地图片；「重新抓这个封面」重新抽帧。
@@ -47,6 +48,7 @@ dotnet build VideoManager.sln -c Release
 
 - 每部作品的封面取自**这部作品的第一个视频**（按季 → 特别篇靠后 → 集号 → 自然文件名排序后的首个文件）。
 - 抽帧位置默认在视频 **33%** 处，宽度 480px，取不到就依次退到 15%、50%、3 秒处。
+- **重新抓封面会换时间点**：同一个视频固定抽一帧每次都是同一张图，所以重抓时按黄金分割比在时间轴上跳点，连点几次能挑到不同画面；换完立刻甩掉位图缓存，界面即时刷新。
 - 27 部作品首次扫描后约十余秒内全部生成，封面缓存放在数据目录，命中缓存不重复抽帧。
 - ffmpeg 查找顺序：设置页里手动指定的路径 → 环境变量 PATH → `D:\Tools\ffmpeg`、`C:\ffmpeg\bin` 等常见位置。
 
@@ -54,14 +56,15 @@ dotnet build VideoManager.sln -c Release
 
 - 单击单集 → 调用**系统默认播放器**（即资源管理器里双击的行为），不绑定具体播放器。
 - 「▶ 播放」按钮播该作品第一集；右键 →「在资源管理器中打开」定位文件。
-- 播放过的集会被记为「看过」，并出现在「最近播放」里（保留最近 60 部作品）。
+- 播放**不会自动标记「看过」**：外部播放器可能自动连播下一集，程序无法知道真正看到哪，标错了就是撒谎；要看完了自己点单集右侧的 ✓。
+- 播放过的作品会进「最近播放」（保留最近 60 条），这里只表示「最近打开过」。
 
 ### 界面
 
 - 无边框深色主题（鲸鱼蓝配色），标题栏可拖动、双击最大化。
 - 左侧导航：全部作品 / 最近播放 / 媒体库路径 / 设置。
 - 右侧详情抽屉：封面、标题、集数、季信息、文件夹、分集列表。
-- 窗口大小、位置、最大化状态会记住，启动时自动夹回当前屏幕工作区内。
+- 窗口打开即最大化；取消最大化时回到上次记忆的尺寸与位置，并自动夹回当前屏幕工作区内。
 
 ### 快捷键
 
@@ -102,7 +105,7 @@ E:\VideoManager
    │  ├─ Media\CoverService.cs      # ffmpeg 抽帧 + ffprobe 时长
    │  ├─ Media\PlayerLauncher.cs    # 调用默认播放器 / 资源管理器
    │  ├─ Storage\AppStorage.cs      # settings.json / library-cache.json / 封面缓存
-   │  └─ Util\                      # 自然排序、SHA1 短哈希
+   │  ├─ Util\                      # 自然排序、SHA1 短哈希、繁→简单字表（OpenCC TSCharacters 衍生）
    ├─ VideoManager             # WPF 表现层（net9.0-windows）
    │  ├─ Views\                # MainWindow、RenameDialog
    │  ├─ ViewModels\           # MainViewModel、各类卡片 VM
@@ -117,7 +120,8 @@ E:\VideoManager
 cd E:\VideoManager\src\VideoManager.Probe
 dotnet run -c Release                                  # 扫三个参考路径，打印归组结果
 dotnet run -c Release -- parse "某文件名.mp4"          # 只看解析结果
-dotnet run -c Release -- cover "某视频.mp4" out.jpg    # 只看抽帧
+dotnet run -c Release -- conv "碧藍航線"               # 只看繁→简转换
+dotnet run -c Release -- cover "某视频.mp4" out.jpg    # 抽 4 个不同时间点，打印各自哈希（验证重抓换帧）
 ```
 
 ---

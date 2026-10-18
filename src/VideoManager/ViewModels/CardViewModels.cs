@@ -82,6 +82,9 @@ public sealed class SeriesCardViewModel : ObservableObject
         Raise(nameof(CoverPath), nameof(HasCover));
     }
 
+    /// <summary>路径没变但文件内容变了（重抓/换图后）时，强制绑定重新读一次图。</summary>
+    public void RefreshCover() => Raise(nameof(CoverPath), nameof(HasCover));
+
     public void UpdateTitle(string title)
     {
         Title = title;
@@ -118,7 +121,8 @@ public sealed class SeriesCardViewModel : ObservableObject
             return $"{series.Files.Count} 集";
         }
 
-        // 文件夹名和剧名只是标点/全半角差异（或完全一致）时，位置等于剧名
+        // 文件夹名和剧名只是标点/全半角/繁简差异（或完全一致）时，位置等于剧名
+        where = Core.Util.ChineseConverter.ToSimplified(where);
         if (Squash(where) == Squash(series.Title))
         {
             return $"{series.Files.Count} 集";
