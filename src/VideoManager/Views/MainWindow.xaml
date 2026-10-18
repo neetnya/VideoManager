@@ -117,13 +117,6 @@
 
                 <Border.ContextMenu>
                     <ContextMenu>
-                        <MenuItem Header="播放"
-                                  Command="{Binding Data.PlayFirstCommand, Source={StaticResource Vm}}"
-                                  CommandParameter="{Binding}" />
-                        <MenuItem Header="查看详情"
-                                  Command="{Binding Data.OpenSeriesCommand, Source={StaticResource Vm}}"
-                                  CommandParameter="{Binding}" />
-                        <Separator />
                         <MenuItem Header="重新抓这个封面"
                                   Command="{Binding Data.RegenerateCoverCommand, Source={StaticResource Vm}}"
                                   CommandParameter="{Binding}" />
@@ -159,9 +152,6 @@
                     Tag="{Binding}">
                 <Border.ContextMenu>
                     <ContextMenu>
-                        <MenuItem Header="播放"
-                                  Command="{Binding Data.PlayEpisodeCommand, Source={StaticResource Vm}}"
-                                  CommandParameter="{Binding}" />
                         <MenuItem Header="在资源管理器中打开"
                                   Command="{Binding Data.RevealCommand, Source={StaticResource Vm}}"
                                   CommandParameter="{Binding}" />
