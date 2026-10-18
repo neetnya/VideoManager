@@ -1,0 +1,20 @@
+<Application x:Class="VideoManager.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:common="clr-namespace:VideoManager.Common"
+             ShutdownMode="OnMainWindowClose">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="Themes/Theme.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+
+            <common:ImagePathToSourceConverter x:Key="Img" />
+            <common:BoolToVisibilityConverter x:Key="BoolVis" />
+            <common:NullOrEmptyToVisibilityConverter x:Key="TextVis" />
+            <common:NullOrEmptyToVisibilityConverter x:Key="TextVisInvert" Invert="True" />
+            <common:InitialsConverter x:Key="Initials" />
+            <common:StringToBrushConverter x:Key="TitleBrush" />
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

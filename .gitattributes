@@ -1,0 +1,24 @@
+# 统一换行：仓库内用 LF，检出到 Windows 工作区时由 Git 转换
+* text=auto eol=crlf
+
+*.cs     text diff=csharp
+*.xaml   text
+*.csproj text
+*.sln    text eol=crlf
+*.md     text
+*.json   text
+*.xml    text
+*.manifest text
+*.ps1    text
+
+# 二进制，不做任何转换
+*.ico   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.exe   binary
+*.dll   binary
+*.pdb   binary
+*.mp4   binary
+*.mkv   binary
