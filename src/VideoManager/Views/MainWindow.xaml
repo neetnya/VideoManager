@@ -134,6 +134,11 @@
                         <MenuItem Header="在资源管理器中打开"
                                   Command="{Binding Data.RevealCommand, Source={StaticResource Vm}}"
                                   CommandParameter="{Binding}" />
+                        <Separator />
+                        <MenuItem Header="删到回收站…"
+                                  Foreground="{StaticResource WarnBrush}"
+                                  Command="{Binding Data.DeleteSeriesCommand, Source={StaticResource Vm}}"
+                                  CommandParameter="{Binding}" />
                     </ContextMenu>
                 </Border.ContextMenu>
             </Border>
@@ -162,6 +167,11 @@
                                   CommandParameter="{Binding}" />
                         <MenuItem Header="标记已看 / 未看"
                                   Command="{Binding Data.MarkWatchedCommand, Source={StaticResource Vm}}"
+                                  CommandParameter="{Binding}" />
+                        <Separator />
+                        <MenuItem Header="删到回收站…"
+                                  Foreground="{StaticResource WarnBrush}"
+                                  Command="{Binding Data.DeleteEpisodeCommand, Source={StaticResource Vm}}"
                                   CommandParameter="{Binding}" />
                     </ContextMenu>
                 </Border.ContextMenu>
@@ -655,6 +665,11 @@
                                         <Button Content="📁" Style="{StaticResource FlatButton}"
                                                 Margin="8,0,0,0" ToolTip="在资源管理器中打开"
                                                 Command="{Binding RevealCommand}"
+                                                CommandParameter="{Binding SelectedCard}" />
+                                        <Button Content="🗑" Style="{StaticResource FlatButton}"
+                                                Margin="8,0,0,0" Foreground="{StaticResource WarnBrush}"
+                                                ToolTip="把这一部的视频文件删到回收站"
+                                                Command="{Binding DeleteSeriesCommand}"
                                                 CommandParameter="{Binding SelectedCard}" />
                                     </StackPanel>
                                     <TextBlock Text="双击标题可改名 · 播放不会自动标记，看完点右侧 ✓ 记一笔"

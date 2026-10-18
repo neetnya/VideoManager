@@ -40,6 +40,7 @@ dotnet build VideoManager.sln -c Release
 - **改名**：详情抽屉里双击标题，或在卡片右键菜单里改；只改库内显示名，不动硬盘文件。
 - **手动换封面**：右键卡片 →「换一张封面…」选本地图片；「重新抓这个封面」重新抽帧。
 - **标记看过**：详情里点单集右侧的 ✓。
+- **删除**：卡片或单集右键 →「删到回收站…」，也可以点详情抽屉里的 🗑。走 Windows 回收站（`SHFileOperation` + `FOF_ALLOWUNDO`），删错了还能从回收站还原；确认框会先告诉你这次要删几个文件。
 - **搜索**：标题栏搜索框，空格分隔多个关键词（全部命中才显示）。
 - **排序**：标题 / 集数 / 文件夹，再点一次切换升降序。
 - **卡片尺寸**：小 / 中 / 大三档。
@@ -58,6 +59,14 @@ dotnet build VideoManager.sln -c Release
 - 「▶ 播放」按钮播该作品第一集；右键 →「在资源管理器中打开」定位文件。
 - 播放**不会自动标记「看过」**：外部播放器可能自动连播下一集，程序无法知道真正看到哪，标错了就是撒谎；要看完了自己点单集右侧的 ✓。
 - 播放过的作品会进「最近播放」（保留最近 60 条），这里只表示「最近打开过」。
+
+### 删除
+
+- 右键卡片 →「删到回收站…」删的是这一部的**全部视频文件**；右键单集删的只是那一集。
+- 走系统回收站，不是直接抹掉：误删了可以在回收站里「还原」，文件会回到原来的路径。
+- 删除前有确认框，会写明这次要删多少个文件；删完媒体库里的卡片、集数、播放记录会同步更新，最后一部删空时卡片自己消失。
+- 只动视频文件本身，不动文件夹，也不动你的封面和改名记录。
+- 网络位置和 U 盘上常常没有回收站，这种情况下系统会直接删除；删除失败（文件正被播放器占用等）会留在列表里并给出原因。
 
 ### 界面
 
@@ -104,10 +113,11 @@ E:\VideoManager
    │  ├─ Library\LibraryScanner.cs  # 遍历目录、归组、排序
    │  ├─ Media\CoverService.cs      # ffmpeg 抽帧 + ffprobe 时长
    │  ├─ Media\PlayerLauncher.cs    # 调用默认播放器 / 资源管理器
+   │  ├─ Media\RecycleBin.cs        # 删除到回收站（SHFileOperation + FOF_ALLOWUNDO）
    │  ├─ Storage\AppStorage.cs      # settings.json / library-cache.json / 封面缓存
    │  ├─ Util\                      # 自然排序、SHA1 短哈希、繁→简单字表（OpenCC TSCharacters 衍生）
    ├─ VideoManager             # WPF 表现层（net9.0-windows）
-   │  ├─ Views\                # MainWindow、RenameDialog
+   │  ├─ Views\                # MainWindow、RenameDialog、ConfirmDialog
    │  ├─ ViewModels\           # MainViewModel、各类卡片 VM
    │  ├─ Themes\Theme.xaml     # 配色、控件样式
    │  └─ Common\               # ObservableObject、RelayCommand、值转换器
@@ -135,3 +145,6 @@ dotnet run -c Release -- cover "某视频.mp4" out.jpg    # 抽 4 个不同时�
 或者把文件按统一命名放好。
 
 **集号显示不对？** 详情抽屉里能看到原始文件名；文件名里没有可识别的集号时按顺序计数。
+
+**删错了怎么办？** 打开系统回收站，找到文件右键「还原」即可回到原路径——删除走的是回收站，
+不会被永久抹掉。U 盘 / 网络位置上的文件系统通常没有回收站，那里的删除会直接生效，删前留神。

@@ -312,6 +312,10 @@ public static class LibraryScanner
         return NaturalComparer.Instance.Compare(a.FileName, b.FileName);
     }
 
+    /// <summary>按现有文件重算季标签，删除几集之后也能用。</summary>
+    public static string ComputeSeasonLabel(IReadOnlyCollection<MediaFile> files)
+        => BuildSeasonLabel(files.ToList());
+
     private static string BuildSeasonLabel(List<MediaFile> files)
     {
         var seasons = files.Where(f => f.Season is > 0).Select(f => f.Season!.Value).Distinct().OrderBy(s => s).ToList();

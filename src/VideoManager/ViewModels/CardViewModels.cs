@@ -47,13 +47,44 @@ public sealed class SeriesCardViewModel : ObservableObject
     public string Title { get; private set; }
     public string FolderPath { get; }
     public string RootPath { get; }
-    public int Count { get; }
-    public string SeasonLabel { get; }
-    public MediaFile? FirstFile { get; }
-    public string SearchText { get; }
+    public MediaFile? FirstFile { get; private set; }
+    public string SearchText { get; private set; }
+
+    private int _count;
+    private string _seasonLabel = "";
+    private string _subtitle = "";
+
+    /// <summary>集数。删掉几集之后会变，所以要走通知。</summary>
+    public int Count
+    {
+        get => _count;
+        private set => SetProperty(ref _count, value);
+    }
+
+    public string SeasonLabel
+    {
+        get => _seasonLabel;
+        private set => SetProperty(ref _seasonLabel, value);
+    }
 
     /// <summary>副标题：集数 + 所在文件夹名。</summary>
-    public string Subtitle { get; }
+    public string Subtitle
+    {
+        get => _subtitle;
+        private set => SetProperty(ref _subtitle, value);
+    }
+
+    /// <summary>删掉文件后刷新集数、首集、季标签和副标题。</summary>
+    public void UpdateCount(int count)
+    {
+        Count = count;
+        FirstFile = Series.FirstFile;
+        SeasonLabel = VideoManager.Core.Library.LibraryScanner.ComputeSeasonLabel(Series.Files);
+        Series.SeasonLabel = SeasonLabel;
+        Subtitle = BuildSubtitle(Series);
+        SearchText = BuildSearchText(Series);
+        Raise(nameof(FirstFile), nameof(SearchText));
+    }
 
     public string CoverPath
     {

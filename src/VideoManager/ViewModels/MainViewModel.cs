@@ -11,6 +11,7 @@ using VideoManager.Core.Library;
 using VideoManager.Core.Media;
 using VideoManager.Core.Models;
 using VideoManager.Core.Storage;
+using VideoManager.Views;
 
 namespace VideoManager.ViewModels;
 
@@ -69,6 +70,8 @@ public sealed class MainViewModel : ObservableObject
         BrowseFfmpegCommand = new RelayCommand(BrowseFfmpeg);
         RevealLibraryCommand = new RelayCommand(() => RevealPath(_host.Storage.DataDirectory));
         ClearCoversCommand = new AsyncRelayCommand(ClearCoversAsync);
+        DeleteSeriesCommand = new AsyncRelayCommand(p => DeleteSeriesAsync(p as SeriesCardViewModel ?? SelectedCard));
+        DeleteEpisodeCommand = new AsyncRelayCommand(p => DeleteEpisodeAsync(p as EpisodeItemViewModel));
 
         Cards.CollectionChanged += (_, _) => UpdateCounters();
     }
@@ -102,6 +105,12 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand BrowseFfmpegCommand { get; }
     public RelayCommand RevealLibraryCommand { get; }
     public AsyncRelayCommand ClearCoversCommand { get; }
+
+    /// <summary>把整部作品的视频文件删到回收站。</summary>
+    public AsyncRelayCommand DeleteSeriesCommand { get; }
+
+    /// <summary>把单集视频文件删到回收站。</summary>
+    public AsyncRelayCommand DeleteEpisodeCommand { get; }
 
     // ─────────────── 状态 ───────────────
 
@@ -776,6 +785,142 @@ public sealed class MainViewModel : ObservableObject
         _host.Save();
     }
 
+    // ─────────────── 删除到回收站 ───────────────
+
+    private async Task DeleteEpisodeAsync(EpisodeItemViewModel? ep)
+    {
+        if (ep is null) return;
+
+        var path = ep.FullPath;
+        if (!File.Exists(path))
+        {
+            StatusText = "文件已经不在硬盘上了，我顺手把它从列表里清掉";
+            RemoveEpisodesFromLibrary([path]);
+            return;
+        }
+
+        var owner = Application.Current?.MainWindow;
+        var card = SelectedCard;
+        var detail = $"{ep.DisplayName}\n{ep.FileName}";
+        if (!ConfirmDialog.Ask(owner, "把这一集删到回收站？", detail))
+        {
+            StatusText = "那就先留着";
+            return;
+        }
+
+        var ok = await Task.Run(() => RecycleBin.MoveToRecycleBin([path]));
+        if (!ok.Success || File.Exists(path))
+        {
+            var why = RecycleBin.DescribeError(ok.ErrorCode);
+            StatusText = string.IsNullOrEmpty(why) ? "删除没成功，文件还在" : $"删除没成功：{why}";
+            return;
+        }
+
+        RemoveEpisodesFromLibrary([path]);
+        StatusText = $"「{ep.DisplayName}」进回收站了";
+
+        // 这一部已经一集不剩了，卡片也一起收走
+        if (card is not null && card.Series.Files.Count == 0)
+        {
+            Cards.Remove(card);
+            IsDetailOpen = false;
+            SelectedCard = null;
+            CardsView.Refresh();
+            UpdateCounters();
+        }
+    }
+
+    private async Task DeleteSeriesAsync(SeriesCardViewModel? card)
+    {
+        if (card is null) return;
+
+        var files = card.Series.Files.Select(f => f.FullPath).ToList();
+        if (files.Count == 0)
+        {
+            StatusText = "这部本来就没有文件";
+            return;
+        }
+
+        var owner = Application.Current?.MainWindow;
+        var headline = $"把《{card.Title}》整个删到回收站？";
+        var detail = $"一共 {files.Count} 个视频文件\n{card.FolderPath}";
+        if (!ConfirmDialog.Ask(owner, headline, detail, $"删掉这 {files.Count} 个"))
+        {
+            StatusText = "那就先留着";
+            return;
+        }
+
+        StatusText = $"正在把 {files.Count} 个文件送进回收站……";
+        var result = await Task.Run(() => RecycleBin.MoveToRecycleBin(files));
+
+        // 以「文件还在不在」为准：SHFileOperation 有时返回非零但已经删掉了一部分
+        var leftover = files.Where(File.Exists).ToList();
+        var deleted = files.Count - leftover.Count;
+
+        if (deleted == 0)
+        {
+            var why = RecycleBin.DescribeError(result.ErrorCode);
+            StatusText = string.IsNullOrEmpty(why) ? "一个也没删掉" : $"一个也没删掉：{why}";
+            return;
+        }
+
+        RemoveEpisodesFromLibrary(files.Where(p => !File.Exists(p)).ToList());
+
+        if (leftover.Count == 0)
+        {
+            Cards.Remove(card);
+            SelectedCard = null;
+            IsDetailOpen = false;
+            CardsView.Refresh();
+            UpdateCounters();
+            StatusText = $"《{card.Title}》的 {deleted} 个文件进回收站了";
+        }
+        else
+        {
+            StatusText = $"删掉 {deleted} 个，还有 {leftover.Count} 个没删掉（可能正被播放器占用）";
+        }
+    }
+
+    /// <summary>把已经删除的文件从内存里的作品 / 单集列表里摘掉，并同步缓存。</summary>
+    private void RemoveEpisodesFromLibrary(IReadOnlyCollection<string> paths)
+    {
+        if (paths.Count == 0) return;
+
+        var set = new HashSet<string>(paths, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var card in Cards.ToList())
+        {
+            var removed = card.Series.Files.RemoveAll(f => set.Contains(f.FullPath));
+            if (removed == 0) continue;
+
+            card.UpdateCount(card.Series.Files.Count);
+        }
+
+        for (var i = Episodes.Count - 1; i >= 0; i--)
+        {
+            if (set.Contains(Episodes[i].FullPath))
+            {
+                Episodes.RemoveAt(i);
+            }
+        }
+
+        foreach (var p in set)
+        {
+            _host.Settings.Watched.Remove(p);
+            _host.Settings.Recent.RemoveAll(r => string.Equals(r, p, StringComparison.OrdinalIgnoreCase));
+        }
+
+        // 详情抽屉里的集数、季标签跟着变；首集也可能换人了
+        if (_selectedCard is not null)
+        {
+            Raise(nameof(SelectedCountText), nameof(SelectedSeasonLabel),
+                  nameof(SelectedCoverPath), nameof(SelectedHasCover));
+        }
+
+        UpdateCounters();
+        SaveCache();
+    }
+
     // ─────────────── 详情 ───────────────
 
     private void OpenSeries(SeriesCardViewModel? card)
@@ -972,7 +1117,7 @@ public sealed class MainViewModel : ObservableObject
     private void UpdateCounters()
     {
         VisibleCount = CardsView.Cast<object>().Count();
-        Raise(nameof(VisibleCount), nameof(CountText));
+        Raise(nameof(VisibleCount), nameof(CountText), nameof(TotalText));
     }
 
     private void ApplySettings()
