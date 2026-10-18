@@ -49,6 +49,7 @@ covers/
 # ===== 临时文件与草稿 =====
 _tmp/
 _shot*.png
+commit-msg.txt
 *.tmp
 *.bak
 *.orig
