@@ -339,23 +339,18 @@ public sealed class MainViewModel : ObservableObject
 
         SyncRoots();
 
-        if (settings.Roots.Count > 0 && (cached.Count == 0 || ShouldAutoRescan()))
+        // 缓存只是让界面先有内容可看，真正的文件状态每次启动都重新扫一遍，
+        // 免得用户在外面删了、加了视频却看不到变化。
+        if (settings.Roots.Count > 0)
         {
             await ScanAsync();
         }
         else
         {
-            StatusText = settings.Roots.Count == 0
-                ? "还没有添加路径 —— 点「+ 添加路径」开始"
-                : $"共 {Cards.Count} 部作品";
+            StatusText = cached.Count > 0
+                ? $"共 {Cards.Count} 部作品"
+                : "还没有添加路径 —— 点「+ 添加路径」开始";
         }
-    }
-
-    private bool ShouldAutoRescan()
-    {
-        var last = _host.Settings.LastScanUtc;
-        if (last is null) return true;
-        return DateTime.UtcNow - last.Value > TimeSpan.FromHours(6);
     }
 
     public bool HasScanned

@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media.Animation;
+using VideoManager.Common;
 using VideoManager.ViewModels;
 
 namespace VideoManager.Views;
@@ -17,6 +18,13 @@ public partial class MainWindow : Window
         _vm = vm;
         DataContext = vm;
         InitializeComponent();
+
+        // 右键菜单的菜单项不在可视树里，拿不到 Window 的 DataContext，
+        // 命令会绑成 null 而点不动。给菜单里的桥塞一份 ViewModel。
+        if (Resources["Vm"] is BindingProxy proxy)
+        {
+            proxy.Data = vm;
+        }
 
         Loaded += OnLoaded;
         Closing += OnClosing;

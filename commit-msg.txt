@@ -1,0 +1,10 @@
+修复右键菜单无效、启动自动重扫、搜索框位置
+
+- 右键菜单：菜单项挂在 Popup 里，不在 Window 的可视树上，
+  RelativeSource AncestorType=Window 找不到任何祖先，命令静默绑成 null，
+  所以每个菜单项都点不动。新增 Common/BindingProxy.cs（Freezable），
+  在 MainWindow 构造时灌入 ViewModel，菜单改用 Source={StaticResource Vm}。
+- 启动自动重扫：有媒体库路径就无条件扫描一次，不再受 6 小时缓存期限约束，
+  外面删掉或新增的视频启动后立刻能看到。缓存仍保留，先出界面再刷新。
+- 搜索框：回退到标题栏内原本的三列布局，仅用 RenderTransform 下移 30px，
+  其余元素位置不变。

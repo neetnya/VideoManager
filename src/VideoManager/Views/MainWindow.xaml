@@ -4,6 +4,7 @@
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         xmlns:vm="clr-namespace:VideoManager.ViewModels"
         xmlns:views="clr-namespace:VideoManager.Views"
+        xmlns:common="clr-namespace:VideoManager.Common"
         Title="鲸鱼娘的媒体库"
         Width="1360" Height="860"
         MinWidth="980" MinHeight="640"
@@ -23,6 +24,11 @@
     </shell:WindowChrome.WindowChrome>
 
     <Window.Resources>
+
+        <!-- 右键菜单不在 Window 的可视树里，RelativeSource 找不到 Window，
+             Command 会静默变成 null。用 Freezable 当桥把 DataContext 递进去；
+             具体值在 MainWindow 构造函数里灌进去，避免依赖继承时机。 -->
+        <common:BindingProxy x:Key="Vm" />
 
         <!-- 剧集卡片 -->
         <DataTemplate x:Key="SeriesCardTemplate" DataType="{x:Type vm:SeriesCardViewModel}">
@@ -112,21 +118,21 @@
                 <Border.ContextMenu>
                     <ContextMenu>
                         <MenuItem Header="播放"
-                                  Command="{Binding DataContext.PlayFirstCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                  Command="{Binding Data.PlayFirstCommand, Source={StaticResource Vm}}"
                                   CommandParameter="{Binding}" />
                         <MenuItem Header="查看详情"
-                                  Command="{Binding DataContext.OpenSeriesCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                  Command="{Binding Data.OpenSeriesCommand, Source={StaticResource Vm}}"
                                   CommandParameter="{Binding}" />
                         <Separator />
                         <MenuItem Header="重新抓这个封面"
-                                  Command="{Binding DataContext.RegenerateCoverCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                  Command="{Binding Data.RegenerateCoverCommand, Source={StaticResource Vm}}"
                                   CommandParameter="{Binding}" />
                         <MenuItem Header="换一张封面…"
-                                  Command="{Binding DataContext.SetCoverCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                  Command="{Binding Data.SetCoverCommand, Source={StaticResource Vm}}"
                                   CommandParameter="{Binding}" />
                         <Separator />
                         <MenuItem Header="在资源管理器中打开"
-                                  Command="{Binding DataContext.RevealCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                  Command="{Binding Data.RevealCommand, Source={StaticResource Vm}}"
                                   CommandParameter="{Binding}" />
                     </ContextMenu>
                 </Border.ContextMenu>
@@ -149,13 +155,13 @@
                 <Border.ContextMenu>
                     <ContextMenu>
                         <MenuItem Header="播放"
-                                  Command="{Binding DataContext.PlayEpisodeCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                  Command="{Binding Data.PlayEpisodeCommand, Source={StaticResource Vm}}"
                                   CommandParameter="{Binding}" />
                         <MenuItem Header="在资源管理器中打开"
-                                  Command="{Binding DataContext.RevealCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                  Command="{Binding Data.RevealCommand, Source={StaticResource Vm}}"
                                   CommandParameter="{Binding}" />
                         <MenuItem Header="标记已看 / 未看"
-                                  Command="{Binding DataContext.MarkWatchedCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                  Command="{Binding Data.MarkWatchedCommand, Source={StaticResource Vm}}"
                                   CommandParameter="{Binding}" />
                     </ContextMenu>
                 </Border.ContextMenu>
@@ -244,7 +250,9 @@
             </Grid.RowDefinitions>
 
             <!-- ============ 标题栏 ============ -->
-            <Grid Grid.Row="0" Background="#FF0B1220" MouseLeftButtonDown="OnTitleBarDrag">
+            <!-- ZIndex=1：搜索框要往下探出标题栏一点，得盖在下面的主体之上，
+                 否则那一截会被主体盖掉。 -->
+            <Grid Grid.Row="0" Panel.ZIndex="1" Background="#FF0B1220" MouseLeftButtonDown="OnTitleBarDrag">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
@@ -257,9 +265,13 @@
                                Margin="9,0,0,0" VerticalAlignment="Center" />
                 </StackPanel>
 
-                <!-- 搜索：单独横跨三列居中，才不会因为左右两列宽度不等而偏向一边 -->
-                <Grid Grid.Column="0" Grid.ColumnSpan="3" Width="440" VerticalAlignment="Center"
-                      HorizontalAlignment="Center">
+                <!-- 搜索：横跨三列居中，避免因左右两列宽度不等而偏心；
+                     整块再往下挪 30px，其他元素位置不变。 -->
+                <Grid Grid.Column="0" Grid.ColumnSpan="3" Width="440" Height="34"
+                      VerticalAlignment="Center" HorizontalAlignment="Center">
+                    <Grid.RenderTransform>
+                        <TranslateTransform Y="30" />
+                    </Grid.RenderTransform>
                     <TextBox x:Name="SearchBox" Style="{StaticResource SearchBox}"
                              Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged, Delay=120}"
                              shell:WindowChrome.IsHitTestVisibleInChrome="True" />
