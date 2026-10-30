@@ -28,12 +28,6 @@ public partial class App : Application
         MainWindow = window;
         window.Show();
 
-        // 预热 Windows ShellExecute 依赖，防止首次唤起播放器卡顿
-        _ = Task.Run(() =>
-        {
-            try { _ = System.Diagnostics.ProcessStartInfo.Empty; } catch { }
-        });
-
         _ = vm.StartupAsync();
     }
 
