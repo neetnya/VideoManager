@@ -57,7 +57,7 @@ public sealed class MainViewModel : ObservableObject
         OpenSeriesCommand = new RelayCommand(p => OpenSeries(p as SeriesCardViewModel));
         CloseDetailCommand = new RelayCommand(() => IsDetailOpen = false);
         PlayFirstCommand = new AsyncRelayCommand(() => PlaySeriesAsync(SelectedCard, playFirstOnly: true));
-        PlayEpisodeCommand = new RelayCommand(p => PlayEpisode(p as EpisodeItemViewModel));
+        PlayEpisodeCommand = new AsyncRelayCommand(p => PlayEpisodeAsync(p as EpisodeItemViewModel));
         RevealCommand = new RelayCommand(p => Reveal(p));
         SetCoverCommand = new AsyncRelayCommand(p => SetCustomCoverAsync(p as SeriesCardViewModel ?? SelectedCard));
         RegenerateCoverCommand = new AsyncRelayCommand(p => RegenerateCoverAsync(p as SeriesCardViewModel ?? SelectedCard));
@@ -92,7 +92,7 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand OpenSeriesCommand { get; }
     public RelayCommand CloseDetailCommand { get; }
     public AsyncRelayCommand PlayFirstCommand { get; }
-    public RelayCommand PlayEpisodeCommand { get; }
+    public AsyncRelayCommand PlayEpisodeCommand { get; }
     public RelayCommand RevealCommand { get; }
     public AsyncRelayCommand SetCoverCommand { get; }
     public AsyncRelayCommand RegenerateCoverCommand { get; }
@@ -736,17 +736,16 @@ public sealed class MainViewModel : ObservableObject
             return;
         }
 
-        PlayEpisodeFile(file);
-        await Task.CompletedTask;
+        await PlayEpisodeFileAsync(file);
     }
 
-    private void PlayEpisode(EpisodeItemViewModel? ep)
+    private async Task PlayEpisodeAsync(EpisodeItemViewModel? ep)
     {
         if (ep is null) return;
-        PlayEpisodeFile(ep.File);
+        await PlayEpisodeFileAsync(ep.File);
     }
 
-    private void PlayEpisodeFile(MediaFile file)
+    private async Task PlayEpisodeFileAsync(MediaFile file)
     {
         if (!File.Exists(file.FullPath))
         {
@@ -754,7 +753,8 @@ public sealed class MainViewModel : ObservableObject
             return;
         }
 
-        var ok = PlayerLauncher.Play(file.FullPath);
+        StatusText = $"正在启动播放器...";
+        var ok = await PlayerLauncher.PlayAsync(file.FullPath);
         StatusText = ok ? $"正在播放 {file.DisplayName}" : "没能叫起播放器";
 
         // 只记「最近打开」，不记「已看」：外部播放器可能自动连播下一集，

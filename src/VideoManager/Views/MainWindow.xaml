@@ -584,7 +584,7 @@
                 <!-- ============ 详情抽屉 ============ -->
                 <Grid Grid.Column="1" x:Name="DetailLayer"
                       Visibility="{Binding IsDetailOpen, Converter={StaticResource BoolVis}}">
-                    <Border Background="#B3050910" MouseLeftButtonDown="OnDetailBackdropClick" />
+                    <Border Background="#B3050910" MouseLeftButtonUp="OnDetailBackdropClick" />
 
                     <Border x:Name="DetailPanel"
                             Width="470" HorizontalAlignment="Right"

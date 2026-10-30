@@ -1,11 +1,22 @@
 using System.Diagnostics;
 using System.IO;
+using System.Threading.Tasks;
 
 namespace VideoManager.Core.Media;
 
 /// <summary>用系统默认播放器打开视频。</summary>
 public static class PlayerLauncher
 {
+    public static async Task<bool> PlayAsync(string path)
+    {
+        if (!File.Exists(path))
+        {
+            return false;
+        }
+
+        return await Task.Run(() => Play(path));
+    }
+
     public static bool Play(string path)
     {
         if (!File.Exists(path))
