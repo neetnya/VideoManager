@@ -12,9 +12,7 @@
 ## 快速开始
 
 ```powershell
-cd E:\VideoManager
 dotnet build VideoManager.sln -c Release
-.\src\VideoManager\bin\Release\net9.0-windows\VideoManager.exe
 ```
 
 首次启动窗口是空的，点左下角 **「＋ 添加路径」** 选一个装视频的文件夹（也可以直接把文件夹拖进窗口），
@@ -128,18 +126,6 @@ E:\VideoManager
    │  └─ Common\               # ObservableObject、RelayCommand、值转换器
    └─ VideoManager.Probe       # 命令行探针：验证扫描 / 解析 / 抽帧
 ```
-
-### 探针（调试用）
-
-```powershell
-cd E:\VideoManager\src\VideoManager.Probe
-dotnet run -c Release                                  # 扫三个参考路径，打印归组结果
-dotnet run -c Release -- parse "某文件名.mp4"          # 只看解析结果
-dotnet run -c Release -- conv "碧藍航線"               # 只看繁→简转换
-dotnet run -c Release -- cover "某视频.mp4" out.jpg    # 抽 4 个不同时间点，打印各自哈希（验证重抓换帧）
-```
-
----
 
 ## 常见问题
 
