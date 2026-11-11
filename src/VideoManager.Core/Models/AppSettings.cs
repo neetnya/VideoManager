@@ -23,9 +23,6 @@ public sealed class AppSettings
     /// <summary>自定义剧集标题（剧集键 → 新标题）。</summary>
     public Dictionary<string, string> TitleOverrides { get; set; } = [];
 
-    /// <summary>自定义封面（剧集键 → 图片路径）。</summary>
-    public Dictionary<string, string> CoverOverrides { get; set; } = [];
-
     /// <summary>已看过的视频（路径 → 上次播放 UTC 时间刻度）。</summary>
     public Dictionary<string, long> Watched { get; set; } = [];
 

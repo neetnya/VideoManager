@@ -59,7 +59,6 @@ public sealed class MainViewModel : ObservableObject
         PlayFirstCommand = new AsyncRelayCommand(() => PlaySeriesAsync(SelectedCard, playFirstOnly: true));
         PlayEpisodeCommand = new AsyncRelayCommand(p => PlayEpisodeAsync(p as EpisodeItemViewModel));
         RevealCommand = new RelayCommand(p => Reveal(p));
-        SetCoverCommand = new AsyncRelayCommand(p => SetCustomCoverAsync(p as SeriesCardViewModel ?? SelectedCard));
         RegenerateCoverCommand = new AsyncRelayCommand(p => RegenerateCoverAsync(p as SeriesCardViewModel ?? SelectedCard));
         SetCardSizeCommand = new RelayCommand(p => SetCardSize(p));
         NavigateCommand = new RelayCommand(p => Navigate(p));
@@ -94,7 +93,6 @@ public sealed class MainViewModel : ObservableObject
     public AsyncRelayCommand PlayFirstCommand { get; }
     public AsyncRelayCommand PlayEpisodeCommand { get; }
     public RelayCommand RevealCommand { get; }
-    public AsyncRelayCommand SetCoverCommand { get; }
     public AsyncRelayCommand RegenerateCoverCommand { get; }
     public RelayCommand SetCardSizeCommand { get; }
     public RelayCommand NavigateCommand { get; }
@@ -364,19 +362,15 @@ public sealed class MainViewModel : ObservableObject
         await PruneCoversAsync();
     }
 
-    /// <summary>本次仍在用的封面绝对路径：每部剧的自动封面 + 用户自选封面。</summary>
+    /// <summary>本次仍在用的封面绝对路径（每部剧的自动封面）。</summary>
     private List<string> CollectUsedCovers()
     {
-        var keep = new List<string>(Cards.Count * 2);
+        var keep = new List<string>(Cards.Count);
         foreach (var c in Cards)
         {
             keep.Add(_host.Storage.CoverPathFor(c.Key));
             if (c.Series.CoverPath is { Length: > 0 } auto) keep.Add(auto);
-            if (c.Series.CustomCover is { Length: > 0 } custom) keep.Add(custom);
         }
-
-        // 用户自选封面的文件名和剧集 Key 无关，只认配置里的映射 —— 全都留着，不让清理误删
-        keep.AddRange(_host.Settings.CoverOverrides.Values);
         return keep;
     }
 
@@ -439,7 +433,6 @@ public sealed class MainViewModel : ObservableObject
                 RootPath = cs.RootPath,
                 FolderPath = cs.FolderPath,
                 CoverPath = cs.CoverPath ?? _host.Storage.CoverPathFor(cs.Key),
-                CustomCover = _host.Settings.CoverOverrides.GetValueOrDefault(cs.Key),
                 SeasonLabel = BuildSeasonLabel(files),
             };
             series.Files.AddRange(files);
@@ -504,10 +497,6 @@ public sealed class MainViewModel : ObservableObject
                 var titleOverride = _host.Settings.TitleOverrides.GetValueOrDefault(s.Key);
                 if (titleOverride is not null) s.Title = titleOverride;
                 s.CoverPath = _host.Storage.CoverPathFor(s.Key);
-                if (_host.Settings.CoverOverrides.TryGetValue(s.Key, out var custom))
-                {
-                    s.CustomCover = custom;
-                }
                 Cards.Add(new SeriesCardViewModel(s));
             }
 
@@ -712,45 +701,6 @@ public sealed class MainViewModel : ObservableObject
         await EnsureCoverAsync(card, force: true);
     }
 
-    private async Task SetCustomCoverAsync(SeriesCardViewModel? card)
-    {
-        if (card is null) return;
-
-        var dlg = new OpenFileDialog
-        {
-            Title = "选一张封面图",
-            Filter = "图片|*.jpg;*.jpeg;*.png;*.webp;*.bmp|所有文件|*.*",
-        };
-
-        if (dlg.ShowDialog() != true) return;
-
-        var src = dlg.FileName;
-        var ext = Path.GetExtension(src);
-        var target = Path.Combine(_host.Storage.CoverDirectory,
-            VideoManager.Core.Util.Hashing.ShortSha1(card.Key + "|custom", 20) + ext);
-
-        try
-        {
-            File.Copy(src, target, overwrite: true);
-        }
-        catch (Exception ex)
-        {
-            StatusText = $"复制封面失败：{ex.Message}";
-            return;
-        }
-
-        _host.Settings.CoverOverrides[card.Key] = target;
-        _host.Save();
-        // 目标文件名固定，覆盖写入后必须让图片缓存失效，否则还是旧图。
-        ImagePathToSourceConverter.Invalidate(target);
-        card.Series.CustomCover = target;
-        card.UpdateCover(target);
-        card.RefreshCover();
-        Raise(nameof(SelectedCoverPath), nameof(SelectedHasCover), nameof(CoverCacheInfo));
-        StatusText = "封面已替换";
-        await Task.CompletedTask;
-    }
-
     private async Task ClearCoversAsync()
     {
         _coverCts?.Cancel();
@@ -760,7 +710,6 @@ public sealed class MainViewModel : ObservableObject
             c.UpdateCover(null);
             c.Series.CoverPath = null;
         }
-        _host.Settings.CoverOverrides.Clear();
         _host.Save();
         Raise(nameof(CoverCacheInfo));
         StatusText = "封面缓存清空了";

@@ -19,15 +19,10 @@ public sealed class Series
     /// <summary>自动生成的封面（取自第一个视频）。</summary>
     public string? CoverPath { get; set; }
 
-    /// <summary>用户指定的封面。</summary>
-    public string? CustomCover { get; set; }
-
     /// <summary>季标签，例如 "S1" 或 "S1–S3"。</summary>
     public string SeasonLabel { get; set; } = "";
 
     public MediaFile? FirstFile => Files.Count > 0 ? Files[0] : null;
 
-    public string EffectiveCover => CustomCover is { Length: > 0 } c && File.Exists(c)
-        ? c
-        : CoverPath ?? "";
+    public string EffectiveCover => CoverPath ?? "";
 }

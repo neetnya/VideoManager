@@ -120,9 +120,6 @@
                         <MenuItem Header="重新抓这个封面"
                                   Command="{Binding Data.RegenerateCoverCommand, Source={StaticResource Vm}}"
                                   CommandParameter="{Binding}" />
-                        <MenuItem Header="换一张封面…"
-                                  Command="{Binding Data.SetCoverCommand, Source={StaticResource Vm}}"
-                                  CommandParameter="{Binding}" />
                         <Separator />
                         <MenuItem Header="在资源管理器中打开"
                                   Command="{Binding Data.RevealCommand, Source={StaticResource Vm}}"
@@ -649,9 +646,6 @@
                                     <StackPanel Orientation="Horizontal">
                                         <Button Content="▶ 播放" Style="{StaticResource PrimaryButton}"
                                                 Padding="20,8" Command="{Binding PlayFirstCommand}" />
-                                        <Button Content="换封面" Style="{StaticResource FlatButton}"
-                                                Margin="8,0,0,0" Command="{Binding SetCoverCommand}"
-                                                CommandParameter="{Binding SelectedCard}" />
                                         <Button Content="重抓" Style="{StaticResource FlatButton}"
                                                 Margin="8,0,0,0" Command="{Binding RegenerateCoverCommand}"
                                                 CommandParameter="{Binding SelectedCard}" />
