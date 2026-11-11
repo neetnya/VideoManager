@@ -29,7 +29,9 @@ public sealed class ImagePathToSourceConverter : IValueConverter
         }
 
         var key = path + "|" + width;
-        if (Cache.TryGetValue(key, out var cached))
+        // 只命中成功的缓存：封面是先占位后生成的，文件还不存在时若把 null 存进去，
+        // 生成完再绑也只会拿回 null —— 表现就是「本次启动永远只有文字封面」。
+        if (Cache.TryGetValue(key, out var cached) && cached is not null)
         {
             return cached;
         }
@@ -54,7 +56,11 @@ public sealed class ImagePathToSourceConverter : IValueConverter
             bmp = null;
         }
 
-        Cache[key] = bmp;
+        if (bmp is not null)
+        {
+            Cache[key] = bmp;
+        }
+
         return bmp;
     }
 

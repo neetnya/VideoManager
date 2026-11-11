@@ -360,6 +360,43 @@ public sealed class MainViewModel : ObservableObject
                 ? $"共 {Cards.Count} 部作品"
                 : "还没有添加路径 —— 点「+ 添加路径」开始";
         }
+
+        await PruneCoversAsync();
+    }
+
+    /// <summary>本次仍在用的封面绝对路径：每部剧的自动封面 + 用户自选封面。</summary>
+    private List<string> CollectUsedCovers()
+    {
+        var keep = new List<string>(Cards.Count * 2);
+        foreach (var c in Cards)
+        {
+            keep.Add(_host.Storage.CoverPathFor(c.Key));
+            if (c.Series.CoverPath is { Length: > 0 } auto) keep.Add(auto);
+            if (c.Series.CustomCover is { Length: > 0 } custom) keep.Add(custom);
+        }
+
+        // 用户自选封面的文件名和剧集 Key 无关，只认配置里的映射 —— 全都留着，不让清理误删
+        keep.AddRange(_host.Settings.CoverOverrides.Values);
+        return keep;
+    }
+
+    /// <summary>
+    /// 启动时清掉没人用的封面图。放在扫描之后：此时 Cards 才是这次真实的作品集合。
+    /// </summary>
+    private async Task PruneCoversAsync()
+    {
+        // 一部都没扫到，或某个启用的路径当前不可用（移动硬盘没插），
+        // 这时清理等于把整个库的封面删光 —— 直接跳过。
+        if (Cards.Count == 0) return;
+        if (_host.Settings.Roots.Where(r => r.Enabled).Any(r => !Directory.Exists(r.Path))) return;
+
+        var keep = CollectUsedCovers();
+        var removed = await Task.Run(() => _host.Storage.PruneUnusedCovers(keep, TimeSpan.FromMinutes(10)));
+        if (removed > 0)
+        {
+            StatusText += $" · 清掉 {removed} 张没人用的封面";
+            Raise(nameof(CoverCacheInfo));
+        }
     }
 
     public bool HasScanned
@@ -576,6 +613,9 @@ public sealed class MainViewModel : ObservableObject
 
                     if (ok)
                     {
+                        // 卡片一开始就带着「期望的封面路径」绑过一次，图片缓存里可能是空；
+                        // 必须让这个路径的缓存失效，界面才会真的去读新生成的文件。
+                        ImagePathToSourceConverter.Invalidate(target);
                         card.Series.CoverPath = target;
                         await _dispatcher.InvokeAsync(() => card.UpdateCover(target));
                     }
@@ -701,8 +741,11 @@ public sealed class MainViewModel : ObservableObject
 
         _host.Settings.CoverOverrides[card.Key] = target;
         _host.Save();
+        // 目标文件名固定，覆盖写入后必须让图片缓存失效，否则还是旧图。
+        ImagePathToSourceConverter.Invalidate(target);
         card.Series.CustomCover = target;
         card.UpdateCover(target);
+        card.RefreshCover();
         Raise(nameof(SelectedCoverPath), nameof(SelectedHasCover), nameof(CoverCacheInfo));
         StatusText = "封面已替换";
         await Task.CompletedTask;

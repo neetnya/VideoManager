@@ -239,6 +239,57 @@ public sealed class AppStorage
             // ignore
         }
     }
+
+    /// <summary>
+    /// 删掉封面目录里「这次启动没用到」的图：剧集被删、文件夹改名之后留下的孤儿封面。
+    /// <paramref name="keepPaths"/> 是本次仍在用的封面绝对路径；
+    /// 比 <paramref name="minAge"/> 更新的文件一律不动（可能正在生成）。
+    /// 返回删掉的张数。
+    /// </summary>
+    public int PruneUnusedCovers(IEnumerable<string> keepPaths, TimeSpan minAge)
+    {
+        var removed = 0;
+        try
+        {
+            if (!Directory.Exists(CoverDirectory)) return 0;
+
+            var keep = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var p in keepPaths)
+            {
+                if (string.IsNullOrWhiteSpace(p)) continue;
+                try { keep.Add(System.IO.Path.GetFullPath(p)); } catch { }
+            }
+
+            var cutoff = DateTime.UtcNow - minAge;
+            foreach (var file in Directory.EnumerateFiles(CoverDirectory))
+            {
+                var name = System.IO.Path.GetFileName(file);
+
+                // 正在抽帧的临时文件（xxx.jpg.tmp.jpg）不能碰
+                if (name.Contains(".tmp.", StringComparison.OrdinalIgnoreCase)) continue;
+
+                string full;
+                try { full = System.IO.Path.GetFullPath(file); } catch { continue; }
+                if (keep.Contains(full)) continue;
+
+                try
+                {
+                    if (File.GetLastWriteTimeUtc(full) > cutoff) continue;
+                    File.Delete(full);
+                    removed++;
+                }
+                catch
+                {
+                    // 单张删不掉无所谓
+                }
+            }
+        }
+        catch
+        {
+            // 清理失败不影响启动
+        }
+        return removed;
+    }
 }
 
 public sealed class CachedSeries
