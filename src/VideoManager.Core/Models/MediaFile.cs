@@ -1,8 +1,12 @@
+using System.Text.RegularExpressions;
+
 namespace VideoManager.Core.Models;
 
 /// <summary>一条视频记录（扫描得到，或来自缓存）。</summary>
-public sealed class MediaFile
+public sealed partial class MediaFile
 {
+    private string? _displayName;
+
     public required string FullPath { get; init; }
     public required string FileName { get; init; }
     public required string FolderPath { get; init; }
@@ -23,8 +27,8 @@ public sealed class MediaFile
     public long SizeBytes { get; init; }
     public DateTime ModifiedUtc { get; init; }
 
-    /// <summary>显示用标题：优先本集标题，其次从文件名里剥出来的干净名字，最后「第 N 集」。</summary>
-    public string DisplayName => Util.ChineseConverter.ToSimplified(ComputeDisplayName());
+    /// <summary>显示用标题：优先本集标题，其次从文件名里剥出来的干净名字，最后「第 N 集」（首次计算后缓存）。</summary>
+    public string DisplayName => _displayName ??= Util.ChineseConverter.ToSimplified(ComputeDisplayName());
 
     private string ComputeDisplayName()
     {
@@ -41,7 +45,7 @@ public sealed class MediaFile
         // 再去掉「剧名前缀 + 集数尾巴」，剩下的才是真正值得显示的东西。
         var cleaned = StripTags(Path.GetFileNameWithoutExtension(FileName));
         cleaned = TrimPrefix(cleaned, ShowTitle);
-        cleaned = OnlyEpisodeCode.IsMatch(cleaned) ? string.Empty : cleaned;
+        cleaned = OnlyEpisodeCodeRegex().IsMatch(cleaned) ? string.Empty : cleaned;
 
         if (cleaned.Length >= 2)
         {
@@ -55,9 +59,8 @@ public sealed class MediaFile
     }
 
     /// <summary>S02E59 / 01 / 01v2 / E03 这种纯集数记号。</summary>
-    private static readonly System.Text.RegularExpressions.Regex OnlyEpisodeCode = new(
-        @"^[Ss]?\d{1,3}(?:[Ee][Pp]?)?\d{0,4}(?:[vV]\d+)?$",
-        System.Text.RegularExpressions.RegexOptions.Compiled);
+    [GeneratedRegex(@"^[Ss]?\d{1,3}(?:[Ee][Pp]?)?\d{0,4}(?:[vV]\d+)?$")]
+    private static partial Regex OnlyEpisodeCodeRegex();
 
     /// <summary>去掉 [] 与 () 包裹的发布标签，压掉多余分隔符。</summary>
     private static string StripTags(string name)

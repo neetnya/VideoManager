@@ -35,7 +35,8 @@ public static class RecycleBin
 
     /// <summary>把一个或多个文件 / 文件夹送进回收站。</summary>
     public static RecycleResult MoveToRecycleBin(IEnumerable<string> paths, IntPtr owner = default)
-    {        var list = paths
+    {
+        var list = paths
             .Where(p => !string.IsNullOrWhiteSpace(p))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Where(p =>
@@ -94,20 +95,32 @@ public static class RecycleBin
         _ => $"系统返回错误码 0x{code:X}",
     };
 
-    /// <summary>回收站不可用（网络盘、U 盘）时的提示，避免用户以为文件还能还原。</summary>
+    /// <summary>
+    /// 判断路径所在卷是否通常支持回收站。
+    /// 只有本地固定磁盘（Fixed）默认有回收站；U 盘（Removable）、网络路径（UNC/Network）
+    /// 等在 Windows 上通常直接永久删除，调用方应在确认框里明确提醒用户。
+    /// </summary>
     public static bool ProbablyRecyclable(string path)
     {
         try
         {
-            var root = Path.GetPathRoot(Path.GetFullPath(path));
+            if (string.IsNullOrWhiteSpace(path)) return false;
+            var full = Path.GetFullPath(path);
+            if (full.StartsWith(@"\\", StringComparison.Ordinal)) return false;
+
+            var root = Path.GetPathRoot(full);
             if (string.IsNullOrEmpty(root)) return false;
-            return new DriveInfo(root).DriveType is DriveType.Fixed or DriveType.Removable;
+            return new DriveInfo(root).DriveType == DriveType.Fixed;
         }
         catch
         {
             return false;
         }
     }
+
+    /// <summary>判断一批路径是否全部位于通常支持回收站的本地磁盘。</summary>
+    public static bool AllProbablyRecyclable(IEnumerable<string> paths)
+        => paths.All(ProbablyRecyclable);
 }
 
 /// <summary>删除结果。<see cref="Count"/> 是提交的条目数，不是成功数。</summary>

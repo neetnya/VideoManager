@@ -36,7 +36,6 @@ public static class LibraryScanner
         var fileCount = 0;
 
         var activeRoots = roots.Where(r => r.Enabled).ToList();
-        var rootFiles = new Dictionary<char, List<(string file, string root)>>();
         var i = 0;
 
         foreach (var root in activeRoots)
@@ -45,9 +44,11 @@ public static class LibraryScanner
             i++;
             progress?.Report(new ScanProgress($"正在扫描 {root.Name} …", i, activeRoots.Count));
 
+            string normalizedRoot;
             IEnumerable<string> files;
             try
             {
+                normalizedRoot = NormalizeDir(root.Path);
                 files = Directory.EnumerateFiles(root.Path, "*", EnumOptions);
             }
             catch (Exception)
@@ -73,7 +74,7 @@ public static class LibraryScanner
                     }
 
                     fileCount++;
-                    AddFile(file, info, root, groups);
+                    AddFile(file, info, root, normalizedRoot, groups);
                 }
                 catch (Exception)
                 {
@@ -107,7 +108,7 @@ public static class LibraryScanner
         return new ScanResult(series, fileCount, skipped, elapsed);
     }
 
-    private static void AddFile(string file, FileInfo info, LibraryRoot root, Dictionary<string, GroupBuilder> groups)
+    private static void AddFile(string file, FileInfo info, LibraryRoot root, string normalizedRoot, Dictionary<string, GroupBuilder> groups)
     {
         var folder = Path.GetDirectoryName(file) ?? root.Path;
         var fileName = Path.GetFileName(file);
@@ -116,9 +117,8 @@ public static class LibraryScanner
         // 向上找出「剧集目录」：跳过 S2 / Season 3 / 第二季 这种季目录
         var showFolder = folder;
         int? folderSeason = null;
-        var isRootLevel = string.Equals(NormalizeDir(showFolder), NormalizeDir(root.Path), StringComparison.OrdinalIgnoreCase);
 
-        while (!string.Equals(NormalizeDir(showFolder), NormalizeDir(root.Path), StringComparison.OrdinalIgnoreCase))
+        while (!string.Equals(NormalizeDir(showFolder), normalizedRoot, StringComparison.OrdinalIgnoreCase))
         {
             var season = NameParser.ParseSeasonFolder(Path.GetFileName(showFolder));
             if (season is null)
@@ -134,7 +134,8 @@ public static class LibraryScanner
             showFolder = parent;
         }
 
-        isRootLevel = string.Equals(NormalizeDir(showFolder), NormalizeDir(root.Path), StringComparison.OrdinalIgnoreCase);
+        var normalizedShowFolder = NormalizeDir(showFolder);
+        var isRootLevel = string.Equals(normalizedShowFolder, normalizedRoot, StringComparison.OrdinalIgnoreCase);
 
         var showName = Path.GetFileName(showFolder.TrimEnd('\\', '/'));
         if (string.IsNullOrWhiteSpace(showName))
@@ -150,8 +151,8 @@ public static class LibraryScanner
 
         // 根目录下的散装文件：按「剧名」归组（同名的不同集数会聚成一部）
         var key = isRootLevel
-            ? Path.Combine(NormalizeDir(root.Path), "::" + NormalizeTitle(title))
-            : NormalizeDir(showFolder);
+            ? Path.Combine(normalizedRoot, "::" + NormalizeTitle(title))
+            : normalizedShowFolder;
 
         if (!groups.TryGetValue(key, out var g))
         {
@@ -240,25 +241,19 @@ public static class LibraryScanner
                 if (!buckets.TryGetValue(norm, out var target))
                 {
                     buckets[norm] = g;
-                    result.Add(g);
                     continue;
                 }
 
                 // 合并到已有分组；保留文件更多的那个作为主目录
                 if (g.Files.Count > target.Files.Count)
                 {
-                    foreach (var f in target.Files)
-                    {
-                        g.Files.Add(f);
-                    }
+                    g.Files.AddRange(target.Files);
                     foreach (var kv in target.Titles)
                     {
                         g.Titles[kv.Key] = g.Titles.GetValueOrDefault(kv.Key) + kv.Value;
                     }
                     target.Files.Clear();
                     target.Titles.Clear();
-                    result.Remove(target);
-                    result.Add(g);
                     buckets[norm] = g;
                 }
                 else
@@ -272,9 +267,17 @@ public static class LibraryScanner
                     g.Titles.Clear();
                 }
             }
+
+            foreach (var b in buckets.Values)
+            {
+                if (b.Files.Count > 0)
+                {
+                    result.Add(b);
+                }
+            }
         }
 
-        return result.Where(r => r.Files.Count > 0).ToList();
+        return result;
     }
 
     public static string NormalizeTitle(string title)
@@ -314,9 +317,9 @@ public static class LibraryScanner
 
     /// <summary>按现有文件重算季标签，删除几集之后也能用。</summary>
     public static string ComputeSeasonLabel(IReadOnlyCollection<MediaFile> files)
-        => BuildSeasonLabel(files.ToList());
+        => BuildSeasonLabel(files);
 
-    private static string BuildSeasonLabel(List<MediaFile> files)
+    private static string BuildSeasonLabel(IReadOnlyCollection<MediaFile> files)
     {
         var seasons = files.Where(f => f.Season is > 0).Select(f => f.Season!.Value).Distinct().OrderBy(s => s).ToList();
         if (seasons.Count == 0)

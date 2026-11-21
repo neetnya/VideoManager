@@ -25,7 +25,9 @@ public enum NavSection
 public sealed class SeriesCardViewModel : ObservableObject
 {
     private string? _coverPath;
+    private bool _hasCover;
     private bool _coverPending;
+    private int _coverRevision;
 
     public SeriesCardViewModel(Series series)
     {
@@ -35,6 +37,7 @@ public sealed class SeriesCardViewModel : ObservableObject
         FolderPath = series.FolderPath;
         RootPath = series.RootPath;
         _coverPath = series.EffectiveCover;
+        _hasCover = !string.IsNullOrEmpty(_coverPath) && File.Exists(_coverPath);
         Count = series.Files.Count;
         SeasonLabel = series.SeasonLabel;
         FirstFile = series.FirstFile;
@@ -49,6 +52,9 @@ public sealed class SeriesCardViewModel : ObservableObject
     public string RootPath { get; }
     public MediaFile? FirstFile { get; private set; }
     public string SearchText { get; private set; }
+
+    /// <summary>最近播放排序位次（越小越新，未播放为 int.MaxValue）。</summary>
+    public int RecentRank { get; set; } = int.MaxValue;
 
     private int _count;
     private string _seasonLabel = "";
@@ -93,12 +99,24 @@ public sealed class SeriesCardViewModel : ObservableObject
         {
             if (SetProperty(ref _coverPath, value))
             {
-                OnPropertyChanged(nameof(HasCover));
+                HasCover = !string.IsNullOrEmpty(_coverPath) && File.Exists(_coverPath);
             }
         }
     }
 
-    public bool HasCover => !string.IsNullOrEmpty(_coverPath) && File.Exists(_coverPath);
+    /// <summary>是否已有可用封面（避免在每次 UI 绑定读取时做同步 File.Exists 系统调用）。</summary>
+    public bool HasCover
+    {
+        get => _hasCover;
+        private set => SetProperty(ref _hasCover, value);
+    }
+
+    /// <summary>封面内容版本号（路径不变但重写了新图时递增，触发 AsyncImage 重新加载）。</summary>
+    public int CoverRevision
+    {
+        get => _coverRevision;
+        private set => SetProperty(ref _coverRevision, value);
+    }
 
     public bool CoverPending
     {
@@ -106,20 +124,30 @@ public sealed class SeriesCardViewModel : ObservableObject
         set => SetProperty(ref _coverPending, value);
     }
 
-    public void UpdateCover(string? path)
+    public void UpdateCover(string? path, bool? exists = null)
     {
         _coverPath = path;
+        _hasCover = exists ?? (!string.IsNullOrEmpty(path) && File.Exists(path));
+        _coverRevision++;
         CoverPending = false;
-        Raise(nameof(CoverPath), nameof(HasCover));
+        Raise(nameof(CoverPath), nameof(HasCover), nameof(CoverRevision));
     }
 
     /// <summary>路径没变但文件内容变了（重抓/换图后）时，强制绑定重新读一次图。</summary>
-    public void RefreshCover() => Raise(nameof(CoverPath), nameof(HasCover));
+    public void RefreshCover()
+    {
+        _hasCover = !string.IsNullOrEmpty(_coverPath) && File.Exists(_coverPath);
+        _coverRevision++;
+        Raise(nameof(CoverPath), nameof(HasCover), nameof(CoverRevision));
+    }
 
     public void UpdateTitle(string title)
     {
         Title = title;
-        Raise(nameof(Title));
+        Series.Title = title;
+        Subtitle = BuildSubtitle(Series);
+        SearchText = BuildSearchText(Series);
+        Raise(nameof(Title), nameof(SearchText));
     }
 
     private static string SafeFolderName(string path)

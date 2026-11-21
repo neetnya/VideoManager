@@ -28,7 +28,19 @@ public partial class App : Application
         MainWindow = window;
         window.Show();
 
-        _ = vm.StartupAsync();
+        _ = StartSafeAsync(vm);
+    }
+
+    private static async Task StartSafeAsync(MainViewModel vm)
+    {
+        try
+        {
+            await vm.StartupAsync();
+        }
+        catch (Exception ex)
+        {
+            vm.StatusText = $"启动异常：{ex.Message}";
+        }
     }
 
     private void OnUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)

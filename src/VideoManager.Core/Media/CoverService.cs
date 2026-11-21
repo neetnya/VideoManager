@@ -1,15 +1,16 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Text;
-using System.Text.RegularExpressions;
 
 namespace VideoManager.Core.Media;
 
 /// <summary>调用 ffmpeg / ffprobe 抽取封面帧。</summary>
 public sealed class CoverService
 {
-    private readonly object _gate = new();
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> FileLocks =
+        new(StringComparer.OrdinalIgnoreCase);
 
     public string? FfmpegPath { get; private set; }
     public string? FfprobePath { get; private set; }
@@ -17,9 +18,10 @@ public sealed class CoverService
     public CoverService(string? configuredFfmpeg = null)
     {
         var ff = Locate(configuredFfmpeg, "ffmpeg.exe");
-        var fp = ff is null ? null : Locate(Path.Combine(Path.GetDirectoryName(ff)!, "ffprobe.exe"), "ffprobe.exe");
+        var ffDir = ff is null ? null : Path.GetDirectoryName(ff);
+        var fp = ffDir is null ? null : Locate(Path.Combine(ffDir, "ffprobe.exe"), "ffprobe.exe");
         FfmpegPath = ff;
-        FfprobePath = fp ?? (ff is null ? null : Locate("ffprobe.exe", Path.Combine(Path.GetDirectoryName(ff)!, "ffprobe.exe")));
+        FfprobePath = fp ?? Locate(null, "ffprobe.exe");
     }
 
     public bool Available => FfmpegPath is not null;
@@ -28,7 +30,7 @@ public sealed class CoverService
     {
         if (!string.IsNullOrWhiteSpace(configured))
         {
-            var p = configured!.Trim('"');
+            var p = configured.Trim().Trim('"');
             if (File.Exists(p))
             {
                 return p;
@@ -49,7 +51,7 @@ public sealed class CoverService
         {
             try
             {
-                var candidate = Path.Combine(dir.Trim('"'), exeName);
+                var candidate = Path.Combine(dir.Trim().Trim('"'), exeName);
                 if (File.Exists(candidate))
                 {
                     return candidate;
@@ -92,11 +94,17 @@ public sealed class CoverService
     }
 
     /// <summary>取视频时长（秒）。失败返回 null。</summary>
-    public double? ProbeDuration(string videoPath)
+    public double? ProbeDuration(string videoPath, CancellationToken token = default)
     {
         if (FfprobePath is null) return null;
-        var args = $"-v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 \"{videoPath}\"";
-        var output = Run(FfprobePath, args, TimeSpan.FromSeconds(20));
+        string[] args =
+        [
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            videoPath,
+        ];
+        var output = Run(FfprobePath, args, TimeSpan.FromSeconds(20), token);
         if (output is null) return null;
         var text = output.Trim();
         if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var d) && d > 1)
@@ -118,81 +126,112 @@ public sealed class CoverService
     {
         if (FfmpegPath is null) return false;
 
-        Directory.CreateDirectory(Path.GetDirectoryName(outputJpg)!);
-
-        var duration = ProbeDuration(videoPath);
-        var timestamps = new List<double>();
-        if (duration is > 1)
+        var fullOutput = Path.GetFullPath(outputJpg);
+        var dir = Path.GetDirectoryName(fullOutput);
+        if (!string.IsNullOrEmpty(dir))
         {
-            var dur = duration.Value;
-            if (variant <= 0)
+            Directory.CreateDirectory(dir);
+        }
+
+        var gate = FileLocks.GetOrAdd(fullOutput, static _ => new SemaphoreSlim(1, 1));
+        gate.Wait(token);
+        try
+        {
+            var duration = ProbeDuration(videoPath, token);
+            var timestamps = new List<double>();
+            if (duration is > 1)
             {
-                timestamps.Add(Math.Max(1.0, dur * Math.Clamp(ratio, 0.05, 0.9)));
-                timestamps.Add(Math.Max(1.0, dur * 0.15));
-                timestamps.Add(Math.Max(0.5, dur * 0.5));
-                timestamps.Add(3.0);
+                var dur = duration.Value;
+                if (variant <= 0)
+                {
+                    timestamps.Add(Math.Max(1.0, dur * Math.Clamp(ratio, 0.05, 0.9)));
+                    timestamps.Add(Math.Max(1.0, dur * 0.15));
+                    timestamps.Add(Math.Max(0.5, dur * 0.5));
+                    timestamps.Add(3.0);
+                }
+                else
+                {
+                    // 用黄金分割比在时间轴上跳点：连续重抓会依次落到
+                    // 约 10%、48%、86%、34%、72% … 的位置，几乎不会重复。
+                    var offset = (variant * 0.381_966_011_25) % 0.8;
+                    for (var k = 0; k < 4; k++)
+                    {
+                        var fraction = 0.1 + ((offset + k * 0.25) % 0.8);
+                        timestamps.Add(Math.Max(0.5, Math.Min(dur - 0.5, dur * fraction)));
+                    }
+                }
             }
             else
             {
-                // 用黄金分割比在时间轴上跳点：连续重抓会依次落到
-                // 约 10%、48%、86%、34%、72% … 的位置，几乎不会重复。
-                var offset = (variant * 0.381_966_011_25) % 0.8;
-                for (var k = 0; k < 4; k++)
-                {
-                    var fraction = 0.1 + ((offset + k * 0.25) % 0.8);
-                    timestamps.Add(Math.Max(0.5, Math.Min(dur - 0.5, dur * fraction)));
-                }
+                timestamps.Add(5.0);
+                timestamps.Add(1.0);
             }
-        }
-        else
-        {
-            timestamps.Add(5.0);
-            timestamps.Add(1.0);
-        }
 
-        foreach (var ts in timestamps.Distinct())
-        {
-            token.ThrowIfCancellationRequested();
-            var tmp = outputJpg + ".tmp.jpg";
-            TryDelete(tmp);
-
-            // 先尝试带 GPU/硬件加速解码的快速路径（失败无副作用）
-            if (TryExtractAt(videoPath, tmp, ts, width))
+            foreach (var ts in timestamps.Distinct())
             {
+                token.ThrowIfCancellationRequested();
+                var tmp = $"{fullOutput}.{Guid.NewGuid():N}.tmp.jpg";
                 try
                 {
-                    if (new FileInfo(tmp).Length > 1024)
+                    if (TryExtractAt(videoPath, tmp, ts, width, token))
                     {
-                        if (File.Exists(outputJpg)) TryDelete(outputJpg);
-                        File.Move(tmp, outputJpg);
-                        return true;
+                        var info = new FileInfo(tmp);
+                        if (info.Exists && info.Length > 1024)
+                        {
+                            File.Move(tmp, fullOutput, overwrite: true);
+                            return true;
+                        }
                     }
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
                 }
                 catch
                 {
                     // fallthrough
                 }
+                finally
+                {
+                    TryDelete(tmp);
+                }
             }
 
-            TryDelete(tmp);
+            return false;
         }
-
-        return false;
+        finally
+        {
+            gate.Release();
+        }
     }
 
-    private bool TryExtractAt(string videoPath, string outputPath, double seconds, int width)
+    private bool TryExtractAt(string videoPath, string outputPath, double seconds, int width, CancellationToken token)
     {
-        var args = string.Create(CultureInfo.InvariantCulture,
-            $"-hide_banner -loglevel error -nostdin -ss {seconds:0.###} -i \"{videoPath}\" -frames:v 1 -vf \"scale={width}:-2\" -q:v 4 -y \"{outputPath}\"");
-        var result = Run(FfmpegPath!, args, TimeSpan.FromSeconds(45));
+        var ss = seconds.ToString("0.###", CultureInfo.InvariantCulture);
+        var scale = $"scale={width}:-2";
+        string[] args =
+        [
+            "-hide_banner",
+            "-loglevel", "error",
+            "-nostdin",
+            "-ss", ss,
+            "-i", videoPath,
+            "-frames:v", "1",
+            "-vf", scale,
+            "-q:v", "4",
+            "-y",
+            outputPath,
+        ];
+        var result = Run(FfmpegPath!, args, TimeSpan.FromSeconds(45), token);
         return result is not null && File.Exists(outputPath);
     }
 
-    private static string? Run(string exe, string args, TimeSpan timeout)
+    private static string? Run(string exe, IReadOnlyList<string> args, TimeSpan timeout, CancellationToken token)
     {
+        Process? process = null;
         try
         {
-            var psi = new ProcessStartInfo(exe, args)
+            var psi = new ProcessStartInfo(exe)
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -201,25 +240,71 @@ public sealed class CoverService
                 StandardOutputEncoding = Encoding.UTF8,
                 StandardErrorEncoding = Encoding.UTF8,
             };
+            foreach (var arg in args)
+            {
+                psi.ArgumentList.Add(arg);
+            }
 
-            using var process = Process.Start(psi);
+            process = Process.Start(psi);
             if (process is null) return null;
 
+            // 先异步消费 stdout/stderr，再受超时与取消控制等待进程退出，避免管道阻塞导致超时失效。
+            var stdoutTask = process.StandardOutput.ReadToEndAsync();
             var stderrTask = process.StandardError.ReadToEndAsync();
-            var stdout = process.StandardOutput.ReadToEnd();
 
-            if (!process.WaitForExit((int)timeout.TotalMilliseconds))
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(token);
+            timeoutCts.CancelAfter(timeout);
+
+            try
             {
-                try { process.Kill(entireProcessTree: true); } catch { }
+                process.WaitForExitAsync(timeoutCts.Token).GetAwaiter().GetResult();
+            }
+            catch (OperationCanceledException)
+            {
+                TryKill(process);
+                if (token.IsCancellationRequested)
+                {
+                    throw;
+                }
                 return null;
             }
 
-            _ = stderrTask;
-            return stdout;
+            // 进程已退出，短暂等待流排空
+            Task.WhenAll(stdoutTask, stderrTask).Wait(TimeSpan.FromSeconds(2));
+
+            if (process.ExitCode != 0)
+            {
+                return null;
+            }
+
+            return stdoutTask.IsCompletedSuccessfully ? stdoutTask.Result : "";
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch
         {
             return null;
+        }
+        finally
+        {
+            process?.Dispose();
+        }
+    }
+
+    private static void TryKill(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+        }
+        catch
+        {
+            // ignore
         }
     }
 
@@ -233,13 +318,5 @@ public sealed class CoverService
         {
             // ignore
         }
-    }
-
-    /// <summary>从 ffmpeg -i 输出里读时长，兜底用。</summary>
-    public static TimeSpan? ParseDurationFromFfmpeg(string stderr)
-    {
-        var m = Regex.Match(stderr, @"Duration:\s*(\d{2}):(\d{2}):(\d{2})\.(\d{2})");
-        if (!m.Success) return null;
-        return new TimeSpan(0, int.Parse(m.Groups[1].Value), int.Parse(m.Groups[2].Value), int.Parse(m.Groups[3].Value), int.Parse(m.Groups[4].Value) * 10);
     }
 }

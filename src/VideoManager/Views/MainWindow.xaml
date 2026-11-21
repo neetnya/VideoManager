@@ -30,7 +30,23 @@
              具体值在 MainWindow 构造函数里灌进去，避免依赖继承时机。 -->
         <common:BindingProxy x:Key="Vm" />
 
-        <!-- 剧集卡片 -->
+        <!-- 透明无高亮的虚拟化列表容器样式 -->
+        <Style x:Key="PlainListBoxItemStyle" TargetType="ListBoxItem">
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <ContentPresenter />
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 剧集卡片（移除高开销卡片级 DropShadowEffect，使用异步缩略图加载） -->
         <DataTemplate x:Key="SeriesCardTemplate" DataType="{x:Type vm:SeriesCardViewModel}">
             <Border x:Name="Card"
                     Width="{Binding DataContext.CardWidth, RelativeSource={RelativeSource AncestorType=Window}}"
@@ -42,27 +58,29 @@
                     Cursor="Hand"
                     MouseLeftButtonUp="OnCardClick"
                     Tag="{Binding}">
-                <Border.Effect>
-                    <DropShadowEffect BlurRadius="18" ShadowDepth="3" Opacity="0.28" Color="#FF000000" />
-                </Border.Effect>
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
-                    <!-- 封面 -->
+                    <!-- 封面（使用 OpacityMask 按顶部圆角真正裁切内容，避免子元素直角溢出圆角边框） -->
                     <Grid Grid.Row="0"
                           Height="{Binding DataContext.CoverHeight, RelativeSource={RelativeSource AncestorType=Window}}">
-                        <Border CornerRadius="14,14,0,0" ClipToBounds="True">
-                            <Grid>
+                        <Border x:Name="CoverMask" CornerRadius="13,13,0,0" Background="{StaticResource PanelBrush}" />
+                        <Grid ClipToBounds="True">
+                            <Grid.OpacityMask>
+                                <VisualBrush Visual="{Binding ElementName=CoverMask}" />
+                            </Grid.OpacityMask>
                                 <Border Background="{Binding Title, Converter={StaticResource TitleBrush}}" />
                                 <TextBlock Text="{Binding Title, Converter={StaticResource Initials}}"
                                            FontSize="52"
                                            Opacity="0.18"
                                            HorizontalAlignment="Center" VerticalAlignment="Center"
                                            FontWeight="Bold" />
-                                <Image Source="{Binding CoverPath, Converter={StaticResource Img}, ConverterParameter=440}"
+                                <Image common:AsyncImage.SourcePath="{Binding CoverPath}"
+                                       common:AsyncImage.DecodeWidth="440"
+                                       common:AsyncImage.Revision="{Binding CoverRevision}"
                                        Stretch="UniformToFill"
                                        RenderOptions.BitmapScalingMode="HighQuality" />
 
@@ -95,8 +113,7 @@
                                                HorizontalAlignment="Center" VerticalAlignment="Center"
                                                Margin="3,0,0,0" />
                                 </Border>
-                            </Grid>
-                        </Border>
+                        </Grid>
                     </Grid>
 
                     <!-- 标题 -->
@@ -136,12 +153,13 @@
             <DataTemplate.Triggers>
                 <Trigger SourceName="Card" Property="IsMouseOver" Value="True">
                     <Setter TargetName="Card" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                    <Setter TargetName="Card" Property="Background" Value="{StaticResource PanelHiBrush}" />
                     <Setter TargetName="PlayBadge" Property="Opacity" Value="1" />
                 </Trigger>
             </DataTemplate.Triggers>
         </DataTemplate>
 
-        <!-- 单集条目 -->
+        <!-- 单集条目（右侧 ✓ 支持直接点击切换已看/未看，不触发播放） -->
         <DataTemplate x:Key="EpisodeTemplate" DataType="{x:Type vm:EpisodeItemViewModel}">
             <Border x:Name="Row" CornerRadius="9" Padding="11,9" Margin="0,0,0,6"
                     Background="Transparent" Cursor="Hand"
@@ -188,9 +206,33 @@
                     <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                         <TextBlock Text="{Binding SizeText}" FontSize="11"
                                    Foreground="{StaticResource TextFaintBrush}" VerticalAlignment="Center" />
-                        <TextBlock Text="{Binding WatchedMark}" FontSize="12"
-                                   Foreground="{StaticResource OkBrush}"
-                                   Margin="9,0,0,0" VerticalAlignment="Center" />
+                        <Button x:Name="WatchBtn"
+                                Content="✓"
+                                Margin="8,0,0,0"
+                                Width="24" Height="24"
+                                Padding="0"
+                                FontSize="12"
+                                Cursor="Hand"
+                                ToolTip="点击标记已看 / 未看"
+                                Command="{Binding Data.MarkWatchedCommand, Source={StaticResource Vm}}"
+                                CommandParameter="{Binding}">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource GhostButton}">
+                                    <Setter Property="Foreground" Value="{StaticResource TextFaintBrush}" />
+                                    <Setter Property="Opacity" Value="0.32" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Watched}" Value="True">
+                                            <Setter Property="Foreground" Value="{StaticResource OkBrush}" />
+                                            <Setter Property="Opacity" Value="1" />
+                                            <Setter Property="FontWeight" Value="Bold" />
+                                        </DataTrigger>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter Property="Opacity" Value="1" />
+                                        </Trigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
                     </StackPanel>
                 </Grid>
             </Border>
@@ -239,7 +281,18 @@
         </DataTemplate>
     </Window.Resources>
 
+    <!-- 最大化时补偿 WindowChrome 隐藏边框偏移，防止标题栏关闭按钮与内容边缘被裁切 -->
     <Border>
+        <Border.Style>
+            <Style TargetType="Border">
+                <Setter Property="Padding" Value="0" />
+                <Style.Triggers>
+                    <DataTrigger Binding="{Binding WindowState, RelativeSource={RelativeSource AncestorType=Window}}" Value="Maximized">
+                        <Setter Property="Padding" Value="7" />
+                    </DataTrigger>
+                </Style.Triggers>
+            </Style>
+        </Border.Style>
         <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="46" />
@@ -285,7 +338,7 @@
 
                 <StackPanel Grid.Column="2" Orientation="Horizontal" shell:WindowChrome.IsHitTestVisibleInChrome="True">
                     <Button Content="—" Style="{StaticResource ChromeButton}" Click="OnMinimize" ToolTip="最小化" />
-                    <Button Content="▢" Style="{StaticResource ChromeButton}" Click="OnMaximize" ToolTip="最大化" />
+                    <Button Content="▢" Style="{StaticResource ChromeButton}" Click="OnMaximize" ToolTip="最大化 / 还原" />
                     <Button Content="✕" Style="{StaticResource CloseButton}" Click="OnClose" ToolTip="关闭" />
                 </StackPanel>
             </Grid>
@@ -394,25 +447,28 @@
 
                         <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center"
                                     Visibility="{Binding IsLibraryView, Converter={StaticResource BoolVis}}">
-                            <!-- 排序 -->
-                            <Button Style="{StaticResource GhostButton}" Command="{Binding ChangeSortCommand}"
-                                    CommandParameter="标题" ToolTip="按标题排序（重复点击切换方向）">
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="排序" FontSize="11.5"
-                                               Foreground="{StaticResource TextDimBrush}" />
-                                    <TextBlock Text="：" FontSize="11.5"
-                                               Foreground="{StaticResource TextDimBrush}" />
-                                    <TextBlock Text="{Binding SortMode}" FontSize="11.5"
-                                               Foreground="{StaticResource TextBrush}" />
-                                    <TextBlock Text="{Binding SortArrow}" FontSize="11.5" Margin="2,0,0,0"
-                                               Foreground="{StaticResource AccentBrush}" />
-                                </StackPanel>
-                            </Button>
-                            <Button Style="{StaticResource GhostButton}" Command="{Binding ChangeSortCommand}"
-                                    CommandParameter="集数" Content="集数" FontSize="11.5" />
-                            <Button Style="{StaticResource GhostButton}" Command="{Binding ChangeSortCommand}"
-                                    CommandParameter="文件夹" Content="文件夹" FontSize="11.5" />
-                            <Border Width="1" Background="{StaticResource LineBrush}" Margin="8,7" />
+                            <!-- 排序（最近播放页按播放先后排序，隐藏排序切换） -->
+                            <StackPanel Orientation="Horizontal"
+                                        Visibility="{Binding IsAll, Converter={StaticResource BoolVis}}">
+                                <Button Style="{StaticResource GhostButton}" Command="{Binding ChangeSortCommand}"
+                                        CommandParameter="标题" ToolTip="按标题排序（重复点击切换方向）">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="排序" FontSize="11.5"
+                                                   Foreground="{StaticResource TextDimBrush}" />
+                                        <TextBlock Text="：" FontSize="11.5"
+                                                   Foreground="{StaticResource TextDimBrush}" />
+                                        <TextBlock Text="{Binding SortMode}" FontSize="11.5"
+                                                   Foreground="{StaticResource TextBrush}" />
+                                        <TextBlock Text="{Binding SortArrow}" FontSize="11.5" Margin="2,0,0,0"
+                                                   Foreground="{StaticResource AccentBrush}" />
+                                    </StackPanel>
+                                </Button>
+                                <Button Style="{StaticResource GhostButton}" Command="{Binding ChangeSortCommand}"
+                                        CommandParameter="集数" Content="集数" FontSize="11.5" />
+                                <Button Style="{StaticResource GhostButton}" Command="{Binding ChangeSortCommand}"
+                                        CommandParameter="文件夹" Content="文件夹" FontSize="11.5" />
+                                <Border Width="1" Background="{StaticResource LineBrush}" Margin="8,7" />
+                            </StackPanel>
                             <!-- 卡片大小 -->
                             <Button Style="{StaticResource GhostButton}" Content="小"
                                     Command="{Binding SetCardSizeCommand}" CommandParameter="Small" FontSize="11.5" />
@@ -602,7 +658,9 @@
                                 <Border CornerRadius="0" ClipToBounds="True">
                                     <Grid>
                                         <Border Background="{Binding SelectedTitle, Converter={StaticResource TitleBrush}}" />
-                                        <Image Source="{Binding SelectedCoverPath, Converter={StaticResource Img}, ConverterParameter=900}"
+                                        <Image common:AsyncImage.SourcePath="{Binding SelectedCoverPath}"
+                                               common:AsyncImage.DecodeWidth="900"
+                                               common:AsyncImage.Revision="{Binding SelectedCoverRevision}"
                                                Stretch="UniformToFill" />
                                         <Border Background="{StaticResource CoverFade}" />
                                     </Grid>
@@ -630,11 +688,6 @@
                                                Margin="0,6,0,0" TextTrimming="CharacterEllipsis" />
                                 </StackPanel>
                             </Grid>
-
-                            <!-- 操作 -->
-                            <StackPanel Grid.Row="0" VerticalAlignment="Bottom" Margin="20,0,20,-26"
-                                        Orientation="Horizontal">
-                            </StackPanel>
 
                             <Grid Grid.Row="1" Margin="0,10,0,0">
                                 <Grid.RowDefinitions>
@@ -664,10 +717,20 @@
                                                Margin="2,10,0,0" />
                                 </StackPanel>
 
-                                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="14,0,10,18">
-                                    <ItemsControl ItemsSource="{Binding Episodes}"
-                                                  ItemTemplate="{StaticResource EpisodeTemplate}" />
-                                </ScrollViewer>
+                                <!-- 虚拟化单集列表（支持上千集流畅滚动） -->
+                                <ListBox Grid.Row="1"
+                                         ItemsSource="{Binding Episodes}"
+                                         ItemTemplate="{StaticResource EpisodeTemplate}"
+                                         ItemContainerStyle="{StaticResource PlainListBoxItemStyle}"
+                                         Background="Transparent"
+                                         BorderThickness="0"
+                                         Padding="14,0,10,18"
+                                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                         ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                         ScrollViewer.CanContentScroll="True"
+                                         VirtualizingPanel.IsVirtualizing="True"
+                                         VirtualizingPanel.VirtualizationMode="Recycling"
+                                         VirtualizingPanel.ScrollUnit="Pixel" />
                             </Grid>
                         </Grid>
                     </Border>

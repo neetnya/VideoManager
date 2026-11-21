@@ -70,9 +70,8 @@ public partial class MainWindow : Window
         Left = Math.Min(Math.Max(left, work.Left), Math.Max(work.Left, work.Right - Width));
         Top = Math.Min(Math.Max(top, work.Top), Math.Max(work.Top, work.Bottom - Height));
 
-        // 默认就是最大化：用户上次怎么退出不重要，打开就该铺满屏幕。
-        // 同时把 Normal 状态的还原尺寸算好，取消最大化时不会变成奇怪的大小。
-        WindowState = WindowState.Maximized;
+        // 尊重上次保存的最大化状态（首次运行默认最大化）
+        WindowState = s.WindowMaximized ? WindowState.Maximized : WindowState.Normal;
 
         SearchBox.Focus();
     }
@@ -102,11 +101,11 @@ public partial class MainWindow : Window
             // 拿不到就退回 WPF 的值
         }
 
-        var wa = SystemParameters.WorkArea;
-        return new Rect(wa.X, wa.Y, wa.Width / scaleX, wa.Height / scaleY);
+        // SystemParameters.WorkArea 本身已经是 DIP，无需再除以 DPI 缩放倍率
+        return SystemParameters.WorkArea;
     }
 
-    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    [StructLayout(LayoutKind.Sequential)]
     private struct NativeRect
     {
         public int Left;
@@ -115,7 +114,7 @@ public partial class MainWindow : Window
         public int Bottom;
     }
 
-    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    [StructLayout(LayoutKind.Sequential)]
     private struct MonitorInfo
     {
         public int Size;
@@ -124,14 +123,16 @@ public partial class MainWindow : Window
         public uint Flags;
     }
 
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    [DllImport("user32.dll")]
     private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
 
-    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Auto)]
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
     private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
 
     private void OnClosing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
+        _vm.Shutdown();
+
         var s = App.Host.Settings;
         if (WindowState == WindowState.Normal)
         {
@@ -194,9 +195,32 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (e.ButtonState == MouseButtonState.Pressed && WindowState == WindowState.Normal)
+        if (e.ButtonState != MouseButtonState.Pressed)
+        {
+            return;
+        }
+
+        // 最大化状态下拖动标题栏：按鼠标横向比例还原窗口位置后再跟手拖动
+        if (WindowState == WindowState.Maximized)
+        {
+            var relX = ActualWidth > 0 ? e.GetPosition(this).X / ActualWidth : 0.5;
+            var screenPos = PointToScreen(e.GetPosition(this));
+            var dpi = System.Windows.Media.VisualTreeHelper.GetDpi(this);
+            var dipX = screenPos.X / dpi.DpiScaleX;
+            var dipY = screenPos.Y / dpi.DpiScaleY;
+
+            WindowState = WindowState.Normal;
+            Left = dipX - Width * relX;
+            Top = dipY - 20;
+        }
+
+        try
         {
             DragMove();
+        }
+        catch (InvalidOperationException)
+        {
+            // 鼠标已松开
         }
     }
 
@@ -210,18 +234,25 @@ public partial class MainWindow : Window
 
     private async void OnDrop(object sender, DragEventArgs e)
     {
-        if (e.Data.GetData(DataFormats.FileDrop) is not string[] items) return;
-        e.Handled = true;
+        try
+        {
+            if (e.Data.GetData(DataFormats.FileDrop) is not string[] items) return;
+            e.Handled = true;
 
-        // 文件 → 取它所在的文件夹；文件夹 → 直接用
-        var dirs = items
-            .Select(p => Directory.Exists(p) ? p : Path.GetDirectoryName(p))
-            .Where(p => !string.IsNullOrEmpty(p))
-            .Select(p => p!)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
+            // 文件 → 取它所在的文件夹；文件夹 → 直接用
+            var dirs = items
+                .Select(p => Directory.Exists(p) ? p : Path.GetDirectoryName(p))
+                .Where(p => !string.IsNullOrEmpty(p))
+                .Select(p => p!)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
 
-        await _vm.AddRootPathsAsync(dirs);
+            await _vm.AddRootPathsAsync(dirs);
+        }
+        catch (Exception ex)
+        {
+            _vm.StatusText = $"拖拽导入失败：{ex.Message}";
+        }
     }
 
     // ─── 卡片 / 单集交互 ───

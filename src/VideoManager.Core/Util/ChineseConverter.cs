@@ -1,3 +1,5 @@
+using System.Collections.Frozen;
+
 namespace VideoManager.Core.Util;
 
 /// <summary>
@@ -85,6 +87,18 @@ public static class ChineseConverter
         "鸌鹱鸏鹲鸕鸬鸘鹴鸚鹦鸛鹳鸝鹂鸞鸾鹵卤鹹咸鹺鹾鹼碱鹽盐麗丽麥麦麩麸麪面麫面麯曲麴曲麵面麼么黃黄黌黉點点黨党黲黪黴霉黶黡黷黩黽黾黿鼋鼂鼌鼉鼍鼕冬鼴鼹齊齐齋斋齎赍齏齑" +
         "齒齿齔龀齕龁齗龂齙龅齜龇齟龃齠龆齡龄齣出齦龈齧啮齪龊齬龉齲龋齶腭齷龌龍龙龎厐龐庞龑䶮龔龚龕龛龜龟鿁䜤";
 
+    private static readonly FrozenDictionary<char, char> Map = BuildMap();
+
+    private static FrozenDictionary<char, char> BuildMap()
+    {
+        var dict = new Dictionary<char, char>(Pairs.Length / 2);
+        for (var i = 0; i + 1 < Pairs.Length; i += 2)
+        {
+            dict.TryAdd(Pairs[i], Pairs[i + 1]);
+        }
+        return dict.ToFrozenDictionary();
+    }
+
     /// <summary>把文本里的繁体字逐个换成简体字；非汉字原样保留。</summary>
     public static string ToSimplified(string? text)
     {
@@ -97,19 +111,13 @@ public static class ChineseConverter
         for (var i = 0; i < text.Length; i++)
         {
             var ch = text[i];
-            if (ch < 0x3400)
-            {
-                continue;
-            }
-
-            var idx = Pairs.IndexOf(ch);
-            if (idx < 0 || (idx & 1) != 0)
+            if (ch < 0x3400 || !Map.TryGetValue(ch, out var simplified))
             {
                 continue;
             }
 
             buffer ??= text.ToCharArray();
-            buffer[i] = Pairs[idx + 1];
+            buffer[i] = simplified;
         }
 
         return buffer is null ? text : new string(buffer);
@@ -125,13 +133,7 @@ public static class ChineseConverter
 
         foreach (var ch in text)
         {
-            if (ch < 0x3400)
-            {
-                continue;
-            }
-
-            var idx = Pairs.IndexOf(ch);
-            if (idx >= 0 && (idx & 1) == 0)
+            if (ch >= 0x3400 && Map.ContainsKey(ch))
             {
                 return true;
             }

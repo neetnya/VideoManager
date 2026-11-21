@@ -8,6 +8,9 @@ namespace VideoManager.Core.Storage;
 /// <summary>配置 + 轻量缓存（JSON）。默认放在程序（exe）所在目录，跟着程序走。</summary>
 public sealed class AppStorage
 {
+    private readonly object _settingsLock = new();
+    private readonly object _cacheLock = new();
+
     /// <summary>老版本的存放位置（%LOCALAPPDATA%\VideoManager），仅用于一次性搬家。</summary>
     private static string LegacyDataDirectory => System.IO.Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VideoManager");
@@ -42,10 +45,6 @@ public sealed class AppStorage
 
         if (TryPrepare(DataDirectory, CoverDirectory))
         {
-            if (dataDirectory is null)
-            {
-                MigrateLegacyData();
-            }
             return;
         }
 
@@ -74,146 +73,101 @@ public sealed class AppStorage
         }
     }
 
-    /// <summary>
-    /// 老版本把数据放在 %LOCALAPPDATA%\VideoManager，新版改到程序目录。
-    /// 首次以新位置启动时把老数据整份搬过来 —— 只在「新位置还没有配置」时搬，避免覆盖用户后来的改动。
-    /// </summary>
-    private void MigrateLegacyData()
-    {
-        try
-        {
-            var legacy = LegacyDataDirectory;
-            if (!Directory.Exists(legacy))
-            {
-                return;
-            }
-
-            if (string.Equals(
-                    System.IO.Path.GetFullPath(legacy).TrimEnd('\\'),
-                    System.IO.Path.GetFullPath(DataDirectory).TrimEnd('\\'),
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                return;
-            }
-
-            var legacySettings = System.IO.Path.Combine(legacy, "settings.json");
-            if (!File.Exists(legacySettings) || File.Exists(SettingsFile))
-            {
-                return;
-            }
-
-            File.Copy(legacySettings, SettingsFile, overwrite: false);
-
-            var legacyCache = System.IO.Path.Combine(legacy, "library-cache.json");
-            if (File.Exists(legacyCache))
-            {
-                File.Copy(legacyCache, CacheFile, overwrite: false);
-            }
-
-            var legacyCovers = System.IO.Path.Combine(legacy, "covers");
-            if (Directory.Exists(legacyCovers))
-            {
-                foreach (var source in Directory.GetFiles(legacyCovers, "*.jpg"))
-                {
-                    try
-                    {
-                        var target = System.IO.Path.Combine(CoverDirectory, System.IO.Path.GetFileName(source));
-                        File.Copy(source, target, overwrite: false);
-                    }
-                    catch
-                    {
-                        // 单张封面失败无所谓，回头会重新抓
-                    }
-                }
-            }
-        }
-        catch
-        {
-            // 搬家失败不影响启动，最坏情况是重新扫一遍
-        }
-    }
-
     public AppSettings LoadSettings()
     {
-        try
+        lock (_settingsLock)
         {
-            if (File.Exists(SettingsFile))
+            try
             {
-                var json = File.ReadAllText(SettingsFile);
-                var s = JsonSerializer.Deserialize<AppSettings>(json, JsonOptions);
-                if (s is not null)
+                if (File.Exists(SettingsFile))
                 {
-                    return s;
+                    var json = File.ReadAllText(SettingsFile);
+                    var s = JsonSerializer.Deserialize<AppSettings>(json, JsonOptions);
+                    if (s is not null)
+                    {
+                        return s;
+                    }
                 }
             }
+            catch
+            {
+                // 配置损坏则回退默认值
+            }
+            return new AppSettings();
         }
-        catch
-        {
-            // 配置损坏则回退默认值
-        }
-        return new AppSettings();
     }
 
     public void SaveSettings(AppSettings settings)
     {
-        try
+        lock (_settingsLock)
         {
-            var json = JsonSerializer.Serialize(settings, JsonOptions);
-            var tmp = SettingsFile + ".tmp";
-            File.WriteAllText(tmp, json);
-            File.Move(tmp, SettingsFile, overwrite: true);
-        }
-        catch
-        {
-            // 保存失败不致命
+            var tmp = $"{SettingsFile}.{Guid.NewGuid():N}.tmp";
+            try
+            {
+                var json = JsonSerializer.Serialize(settings, JsonOptions);
+                File.WriteAllText(tmp, json);
+                File.Move(tmp, SettingsFile, overwrite: true);
+            }
+            catch
+            {
+                // 保存失败不致命
+            }
+            finally
+            {
+                TryDeleteFile(tmp);
+            }
         }
     }
 
     public List<CachedSeries> LoadCache()
     {
-        try
+        lock (_cacheLock)
         {
-            if (File.Exists(CacheFile))
+            try
             {
-                var json = File.ReadAllText(CacheFile);
-                return JsonSerializer.Deserialize<List<CachedSeries>>(json, JsonOptions) ?? [];
+                if (File.Exists(CacheFile))
+                {
+                    var json = File.ReadAllText(CacheFile);
+                    return JsonSerializer.Deserialize<List<CachedSeries>>(json, JsonOptions) ?? [];
+                }
             }
+            catch
+            {
+                // 缓存损坏则重新扫描
+            }
+            return [];
         }
-        catch
-        {
-            // 缓存损坏则重新扫描
-        }
-        return [];
     }
 
     public void SaveCache(IEnumerable<CachedSeries> series)
     {
-        try
+        var snapshot = series.ToList();
+        lock (_cacheLock)
         {
-            var json = JsonSerializer.Serialize(series.ToList(), JsonOptions);
-            var tmp = CacheFile + ".tmp";
-            File.WriteAllText(tmp, json);
-            File.Move(tmp, CacheFile, overwrite: true);
-        }
-        catch
-        {
-            // ignore
+            var tmp = $"{CacheFile}.{Guid.NewGuid():N}.tmp";
+            try
+            {
+                var json = JsonSerializer.Serialize(snapshot, JsonOptions);
+                File.WriteAllText(tmp, json);
+                File.Move(tmp, CacheFile, overwrite: true);
+            }
+            catch
+            {
+                // ignore
+            }
+            finally
+            {
+                TryDeleteFile(tmp);
+            }
         }
     }
 
     /// <summary>丢弃缓存文件（解析规则升级后旧标题不可再用）。</summary>
     public void ClearCache()
     {
-        try
+        lock (_cacheLock)
         {
-            if (File.Exists(CacheFile))
-            {
-                File.Delete(CacheFile);
-            }
-        }
-        catch
-        {
-            // ignore
+            TryDeleteFile(CacheFile);
         }
     }
 
@@ -229,9 +183,9 @@ public sealed class AppStorage
         try
         {
             if (!Directory.Exists(CoverDirectory)) return;
-            foreach (var f in Directory.GetFiles(CoverDirectory, "*.jpg"))
+            foreach (var f in Directory.EnumerateFiles(CoverDirectory, "*.jpg"))
             {
-                try { File.Delete(f); } catch { }
+                TryDeleteFile(f);
             }
         }
         catch
@@ -289,6 +243,18 @@ public sealed class AppStorage
             // 清理失败不影响启动
         }
         return removed;
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+        catch
+        {
+            // ignore
+        }
     }
 }
 

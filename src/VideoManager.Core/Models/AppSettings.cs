@@ -46,7 +46,7 @@ public sealed class AppSettings
     public int CacheVersion { get; set; }
 
     /// <summary>当前的解析规则版本。改动标题/集数解析逻辑时 +1。</summary>
-    public const int CurrentCacheVersion = 2;
+    public const int CurrentCacheVersion = 3;
 
     /// <summary>卡片大小预设：Small / Medium / Large。</summary>
     public string CardSize { get; set; } = "Medium";

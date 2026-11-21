@@ -3,7 +3,6 @@ using System.ComponentModel;
 using System.IO;
 using System.Windows;
 using System.Windows.Data;
-using System.Windows.Media;
 using System.Windows.Threading;
 using Microsoft.Win32;
 using VideoManager.Common;
@@ -21,11 +20,15 @@ public sealed class MainViewModel : ObservableObject
     private readonly Dispatcher _dispatcher;
 
     private CancellationTokenSource? _coverCts;
+    private bool _suppressCounterUpdates;
+    private string[] _searchTokens = [];
+    private Dictionary<string, int> _recentRanks = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>重抓封面的次数计数，用来轮换抽帧时间点。</summary>
     private int _coverVariant;
     private string _searchText = "";
     private string _statusText = "准备就绪";
+    private string _coverCacheInfo = "";
     private bool _isBusy;
     private double _progressValue;
     private bool _isIndeterminate;
@@ -49,6 +52,7 @@ public sealed class MainViewModel : ObservableObject
         CardsView = CollectionViewSource.GetDefaultView(Cards);
         CardsView.Filter = FilterCard;
 
+        RebuildRecentLookup();
         ApplySettings();
 
         AddRootCommand = new AsyncRelayCommand(AddRootAsync);
@@ -72,12 +76,18 @@ public sealed class MainViewModel : ObservableObject
         DeleteSeriesCommand = new AsyncRelayCommand(p => DeleteSeriesAsync(p as SeriesCardViewModel ?? SelectedCard));
         DeleteEpisodeCommand = new AsyncRelayCommand(p => DeleteEpisodeAsync(p as EpisodeItemViewModel));
 
-        Cards.CollectionChanged += (_, _) => UpdateCounters();
+        Cards.CollectionChanged += (_, _) =>
+        {
+            if (!_suppressCounterUpdates)
+            {
+                UpdateCounters();
+            }
+        };
     }
 
     // ─────────────── 集合 ───────────────
 
-    public ObservableCollection<SeriesCardViewModel> Cards { get; }
+    public BatchObservableCollection<SeriesCardViewModel> Cards { get; }
     public ObservableCollection<EpisodeItemViewModel> Episodes { get; }
     public ObservableCollection<RootItemViewModel> Roots { get; }
 
@@ -119,6 +129,10 @@ public sealed class MainViewModel : ObservableObject
         {
             if (SetProperty(ref _searchText, value))
             {
+                var trimmed = value.Trim();
+                _searchTokens = trimmed.Length == 0
+                    ? []
+                    : trimmed.ToLowerInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries);
                 CardsView.Refresh();
                 UpdateCounters();
             }
@@ -166,8 +180,13 @@ public sealed class MainViewModel : ObservableObject
             {
                 Raise(nameof(IsAll), nameof(IsRecent), nameof(IsRoots), nameof(IsSettings),
                       nameof(IsLibraryView), nameof(PageTitle), nameof(EmptyHint));
+                ApplySortDescriptions();
                 CardsView.Refresh();
                 UpdateCounters();
+                if (value == NavSection.Settings)
+                {
+                    _ = RefreshCoverCacheInfoAsync();
+                }
             }
         }
     }
@@ -234,7 +253,7 @@ public sealed class MainViewModel : ObservableObject
             {
                 Raise(nameof(HasSelection), nameof(SelectedTitle), nameof(SelectedCountText),
                       nameof(SelectedSeasonLabel), nameof(SelectedCoverPath), nameof(SelectedHasCover),
-                      nameof(SelectedFolder), nameof(SelectedSearchKey));
+                      nameof(SelectedCoverRevision), nameof(SelectedFolder), nameof(SelectedSearchKey));
                 LoadEpisodes(value);
             }
         }
@@ -246,6 +265,7 @@ public sealed class MainViewModel : ObservableObject
     public string SelectedFolder => _selectedCard?.FolderPath ?? "";
     public string SelectedCoverPath => _selectedCard?.CoverPath ?? "";
     public bool SelectedHasCover => _selectedCard?.HasCover ?? false;
+    public int SelectedCoverRevision => _selectedCard?.CoverRevision ?? 0;
     public string SelectedSearchKey => _selectedCard?.Key ?? "";
 
     public string SelectedCountText => _selectedCard is null
@@ -276,7 +296,6 @@ public sealed class MainViewModel : ObservableObject
             if (SetProperty(ref _sortDesc, value))
             {
                 Raise(nameof(SortArrow));
-                CardsView.Refresh();
             }
         }
     }
@@ -289,9 +308,12 @@ public sealed class MainViewModel : ObservableObject
         get => _host.Covers.FfmpegPath ?? _host.Settings.FfmpegPath ?? "";
         set
         {
-            _host.Settings.FfmpegPath = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+            var next = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+            _host.Settings.FfmpegPath = next;
             _host.Save();
-            Raise();
+            var svc = _host.RebuildCoverService();
+            Raise(nameof(FfmpegPathText), nameof(FfmpegStatus), nameof(FfmpegAvailable));
+            StatusText = svc.Available ? "ffmpeg 接上了，封面可以抓了" : "这个路径里没有找到 ffmpeg";
         }
     }
 
@@ -305,20 +327,49 @@ public sealed class MainViewModel : ObservableObject
 
     public string CoverCacheInfo
     {
-        get
+        get => _coverCacheInfo;
+        private set => SetProperty(ref _coverCacheInfo, value);
+    }
+
+    /// <summary>窗口关闭时取消并释放后台任务。</summary>
+    public void Shutdown()
+    {
+        CancelCoverPipeline();
+    }
+
+    private void CancelCoverPipeline()
+    {
+        var old = Interlocked.Exchange(ref _coverCts, null);
+        if (old is null) return;
+        try { old.Cancel(); } catch { }
+        try { old.Dispose(); } catch { }
+    }
+
+    private async Task RefreshCoverCacheInfoAsync()
+    {
+        var dir = _host.Storage.CoverDirectory;
+        var text = await Task.Run(() =>
         {
             try
             {
-                var dir = _host.Storage.CoverDirectory;
-                var files = Directory.Exists(dir) ? Directory.GetFiles(dir, "*.jpg") : [];
-                var size = files.Sum(f => new FileInfo(f).Length);
-                return $"{files.Length} 张封面 · {size / 1024.0 / 1024.0:0.#} MB";
+                if (!Directory.Exists(dir)) return "0 张封面 · 0 MB";
+                var count = 0;
+                long size = 0;
+                foreach (var f in Directory.EnumerateFiles(dir, "*.jpg"))
+                {
+                    if (Path.GetFileName(f).Contains(".tmp.", StringComparison.OrdinalIgnoreCase)) continue;
+                    count++;
+                    try { size += new FileInfo(f).Length; } catch { }
+                }
+                return $"{count} 张封面 · {size / 1024.0 / 1024.0:0.#} MB";
             }
             catch
             {
                 return "";
             }
-        }
+        });
+
+        CoverCacheInfo = text;
     }
 
     // ─────────────── 启动 / 扫描 ───────────────
@@ -327,7 +378,7 @@ public sealed class MainViewModel : ObservableObject
     {
         var settings = _host.Settings;
 
-        // 解析规则变了（例如繁体转简体），旧缓存里的标题就过期了，必须重扫一次。
+        // 解析规则变了（例如繁体转简体 / 集数上限调整），旧缓存里的标题就过期了，必须重扫一次。
         if (settings.CacheVersion != AppSettings.CurrentCacheVersion)
         {
             _host.Storage.ClearCache();
@@ -345,6 +396,7 @@ public sealed class MainViewModel : ObservableObject
         }
 
         SyncRoots();
+        _ = RefreshCoverCacheInfoAsync();
 
         // 缓存只是让界面先有内容可看，真正的文件状态每次启动都重新扫一遍，
         // 免得用户在外面删了、加了视频却看不到变化。
@@ -389,7 +441,7 @@ public sealed class MainViewModel : ObservableObject
         if (removed > 0)
         {
             StatusText += $" · 清掉 {removed} 张没人用的封面";
-            Raise(nameof(CoverCacheInfo));
+            _ = RefreshCoverCacheInfoAsync();
         }
     }
 
@@ -401,7 +453,7 @@ public sealed class MainViewModel : ObservableObject
 
     private void ApplyCache(IReadOnlyList<CachedSeries> cached)
     {
-        Cards.Clear();
+        var list = new List<SeriesCardViewModel>(cached.Count);
         foreach (var cs in cached)
         {
             if (cs.Files.Count == 0) continue;
@@ -433,23 +485,26 @@ public sealed class MainViewModel : ObservableObject
                 RootPath = cs.RootPath,
                 FolderPath = cs.FolderPath,
                 CoverPath = cs.CoverPath ?? _host.Storage.CoverPathFor(cs.Key),
-                SeasonLabel = BuildSeasonLabel(files),
+                SeasonLabel = LibraryScanner.ComputeSeasonLabel(files),
             };
             series.Files.AddRange(files);
 
-            Cards.Add(new SeriesCardViewModel(series));
+            var card = new SeriesCardViewModel(series);
+            card.RecentRank = ComputeRecentRank(series);
+            list.Add(card);
         }
 
-        CardsView.Refresh();
-        UpdateCounters();
-    }
+        _suppressCounterUpdates = true;
+        try
+        {
+            Cards.ReplaceAll(list);
+        }
+        finally
+        {
+            _suppressCounterUpdates = false;
+        }
 
-    private static string BuildSeasonLabel(List<MediaFile> files)
-    {
-        var seasons = files.Where(f => f.Season is > 0).Select(f => f.Season!.Value).Distinct().OrderBy(s => s).ToList();
-        if (seasons.Count == 0) return files.Count > 0 ? $"{files.Count} 集" : "";
-        if (seasons.Count == 1) return $"S{seasons[0]} · {files.Count} 集";
-        return $"S{seasons[0]}–S{seasons[^1]} · {files.Count} 集";
+        UpdateCounters();
     }
 
     public async Task RefreshAsync()
@@ -467,6 +522,9 @@ public sealed class MainViewModel : ObservableObject
             StatusText = "没有启用的路径";
             return;
         }
+
+        // 先停止旧的封面抓取任务，避免与本次扫描互相改写状态栏或缓存。
+        CancelCoverPipeline();
 
         IsBusy = true;
         IsIndeterminate = true;
@@ -487,20 +545,31 @@ public sealed class MainViewModel : ObservableObject
 
             var result = await Task.Run(() => LibraryScanner.Scan(enabled, progress));
 
-            Cards.Clear();
-            Episodes.Clear();
-            SelectedCard = null;
-            IsDetailOpen = false;
-
+            var nextCards = new List<SeriesCardViewModel>(result.Series.Count);
             foreach (var s in result.Series)
             {
                 var titleOverride = _host.Settings.TitleOverrides.GetValueOrDefault(s.Key);
                 if (titleOverride is not null) s.Title = titleOverride;
                 s.CoverPath = _host.Storage.CoverPathFor(s.Key);
-                Cards.Add(new SeriesCardViewModel(s));
+                var card = new SeriesCardViewModel(s);
+                card.RecentRank = ComputeRecentRank(s);
+                nextCards.Add(card);
             }
 
-            CardsView.Refresh();
+            Episodes.Clear();
+            SelectedCard = null;
+            IsDetailOpen = false;
+
+            _suppressCounterUpdates = true;
+            try
+            {
+                Cards.ReplaceAll(nextCards);
+            }
+            finally
+            {
+                _suppressCounterUpdates = false;
+            }
+
             HasScanned = true;
             UpdateCounters();
 
@@ -561,9 +630,10 @@ public sealed class MainViewModel : ObservableObject
     /// <summary>为缺少封面的剧集生成封面（取自每部剧的第一个视频）。</summary>
     private void StartCoverPipeline()
     {
-        _coverCts?.Cancel();
-        _coverCts = new CancellationTokenSource();
-        var token = _coverCts.Token;
+        CancelCoverPipeline();
+        var cts = new CancellationTokenSource();
+        _coverCts = cts;
+        var token = cts.Token;
 
         var svc = _host.Covers;
         if (!svc.Available)
@@ -600,24 +670,31 @@ public sealed class MainViewModel : ObservableObject
                         () => svc.ExtractCover(first.FullPath, target, _host.Settings.CoverWidth,
                             _host.Settings.CoverFrameRatio, ct), ct);
 
+                    if (ct.IsCancellationRequested) return;
+
                     if (ok)
                     {
-                        // 卡片一开始就带着「期望的封面路径」绑过一次，图片缓存里可能是空；
-                        // 必须让这个路径的缓存失效，界面才会真的去读新生成的文件。
                         ImagePathToSourceConverter.Invalidate(target);
                         card.Series.CoverPath = target;
-                        await _dispatcher.InvokeAsync(() => card.UpdateCover(target));
+                        await InvokeUiSafeAsync(() =>
+                        {
+                            card.UpdateCover(target, exists: true);
+                            if (ReferenceEquals(_selectedCard, card))
+                            {
+                                Raise(nameof(SelectedCoverPath), nameof(SelectedHasCover), nameof(SelectedCoverRevision));
+                            }
+                        });
                     }
                     else
                     {
                         Interlocked.Increment(ref failed);
-                        await _dispatcher.InvokeAsync(() => card.CoverPending = false);
+                        await InvokeUiSafeAsync(() => card.CoverPending = false);
                     }
 
                     var n = Interlocked.Increment(ref done);
                     if (n % 3 == 0 || n == pending.Count)
                     {
-                        await _dispatcher.InvokeAsync(() =>
+                        await InvokeUiSafeAsync(() =>
                         {
                             StatusText = $"正在从视频里抓封面 {n}/{pending.Count} …";
                             ProgressValue = n * 100.0 / pending.Count;
@@ -628,25 +705,39 @@ public sealed class MainViewModel : ObservableObject
             catch (OperationCanceledException)
             {
                 // 用户重新扫描或关闭程序
+                return;
             }
             catch (Exception ex)
             {
-                await _dispatcher.InvokeAsync(() => StatusText = $"封面提取出错：{ex.Message}");
+                await InvokeUiSafeAsync(() => StatusText = $"封面提取出错：{ex.Message}");
                 return;
             }
 
             if (token.IsCancellationRequested) return;
 
-            await _dispatcher.InvokeAsync(() =>
+            await InvokeUiSafeAsync(() =>
             {
                 StatusText = failed == 0
                     ? $"全部就绪 · {Cards.Count} 部作品"
                     : $"{Cards.Count} 部作品（{failed} 张封面没抓到）";
                 ProgressValue = 100;
-                Raise(nameof(CoverCacheInfo));
                 SaveCache();
+                _ = RefreshCoverCacheInfoAsync();
             });
         }, token);
+    }
+
+    private async Task InvokeUiSafeAsync(Action action)
+    {
+        if (_dispatcher.HasShutdownStarted || _dispatcher.HasShutdownFinished) return;
+        try
+        {
+            await _dispatcher.InvokeAsync(action);
+        }
+        catch (TaskCanceledException)
+        {
+            // 窗口正在关闭
+        }
     }
 
     private async Task<bool> EnsureCoverAsync(SeriesCardViewModel? card, bool force)
@@ -666,10 +757,6 @@ public sealed class MainViewModel : ObservableObject
         if (force)
         {
             variant = Interlocked.Increment(ref _coverVariant) & 0xFFFF;
-            if (File.Exists(target))
-            {
-                try { File.Delete(target); } catch { }
-            }
         }
 
         StatusText = force ? $"正在换个时间点重抓「{card.Title}」的封面……" : $"正在抓「{card.Title}」的封面……";
@@ -678,14 +765,17 @@ public sealed class MainViewModel : ObservableObject
 
         if (ok)
         {
-            // 同一个文件路径写入了新画面，WPF 的位图缓存会继续显示旧图，必须先失效。
+            // 同一个文件路径写入了新画面，LRU 缓存必须先失效，再递增版本号触发界面重绘。
             ImagePathToSourceConverter.Invalidate(target);
             card.Series.CoverPath = target;
-            card.UpdateCover(target);
-            card.RefreshCover();
+            card.UpdateCover(target, exists: true);
             StatusText = "封面换好了";
-            _dispatcher.Invoke(() => Raise(nameof(SelectedCoverPath), nameof(SelectedHasCover), nameof(CoverCacheInfo)));
+            if (ReferenceEquals(_selectedCard, card))
+            {
+                Raise(nameof(SelectedCoverPath), nameof(SelectedHasCover), nameof(SelectedCoverRevision));
+            }
             SaveCache();
+            _ = RefreshCoverCacheInfoAsync();
         }
         else
         {
@@ -703,15 +793,22 @@ public sealed class MainViewModel : ObservableObject
 
     private async Task ClearCoversAsync()
     {
-        _coverCts?.Cancel();
+        CancelCoverPipeline();
         await Task.Run(() => _host.Storage.ClearCovers());
+        ImageCache.Clear();
+
         foreach (var c in Cards)
         {
-            c.UpdateCover(null);
             c.Series.CoverPath = null;
+            c.UpdateCover(null, exists: false);
         }
+        if (_selectedCard is not null)
+        {
+            Raise(nameof(SelectedCoverPath), nameof(SelectedHasCover), nameof(SelectedCoverRevision));
+        }
+
         _host.Save();
-        Raise(nameof(CoverCacheInfo));
+        _ = RefreshCoverCacheInfoAsync();
         StatusText = "封面缓存清空了";
         StartCoverPipeline();
     }
@@ -745,7 +842,7 @@ public sealed class MainViewModel : ObservableObject
             return;
         }
 
-        StatusText = $"正在启动播放器...";
+        StatusText = "正在启动播放器...";
         var ok = await PlayerLauncher.PlayAsync(file.FullPath);
         StatusText = ok ? $"正在播放 {file.DisplayName}" : "没能叫起播放器";
 
@@ -757,9 +854,47 @@ public sealed class MainViewModel : ObservableObject
         {
             _host.Settings.Recent.RemoveRange(60, _host.Settings.Recent.Count - 60);
         }
+        RebuildRecentLookup();
+        RefreshAllCardRecentRanks();
         _host.Save();
 
-        if (IsRecent) CardsView.Refresh();
+        if (IsRecent)
+        {
+            CardsView.Refresh();
+            UpdateCounters();
+        }
+    }
+
+    private void RebuildRecentLookup()
+    {
+        var map = new Dictionary<string, int>(_host.Settings.Recent.Count, StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < _host.Settings.Recent.Count; i++)
+        {
+            map.TryAdd(_host.Settings.Recent[i], i);
+        }
+        _recentRanks = map;
+    }
+
+    private int ComputeRecentRank(Series series)
+    {
+        if (_recentRanks.Count == 0) return int.MaxValue;
+        var best = int.MaxValue;
+        foreach (var f in series.Files)
+        {
+            if (_recentRanks.TryGetValue(f.FullPath, out var rank) && rank < best)
+            {
+                best = rank;
+            }
+        }
+        return best;
+    }
+
+    private void RefreshAllCardRecentRanks()
+    {
+        foreach (var card in Cards)
+        {
+            card.RecentRank = ComputeRecentRank(card.Series);
+        }
     }
 
     private void MarkWatched(EpisodeItemViewModel? ep)
@@ -793,8 +928,14 @@ public sealed class MainViewModel : ObservableObject
 
         var owner = Application.Current?.MainWindow;
         var card = SelectedCard;
-        var detail = $"{ep.DisplayName}\n{ep.FileName}";
-        if (!ConfirmDialog.Ask(owner, "把这一集删到回收站？", detail))
+        var recyclable = RecycleBin.ProbablyRecyclable(path);
+        var headline = recyclable ? "把这一集删到回收站？" : "永久删除这一集？（该磁盘不支持回收站）";
+        var detail = recyclable
+            ? $"{ep.DisplayName}\n{ep.FileName}"
+            : $"{ep.DisplayName}\n{ep.FileName}\n\n⚠ 位于移动磁盘或网络位置，删除后无法从回收站还原！";
+        var confirmText = recyclable ? "删掉" : "永久删除";
+
+        if (!ConfirmDialog.Ask(owner, headline, detail, confirmText))
         {
             StatusText = "那就先留着";
             return;
@@ -809,7 +950,7 @@ public sealed class MainViewModel : ObservableObject
         }
 
         RemoveEpisodesFromLibrary([path]);
-        StatusText = $"「{ep.DisplayName}」进回收站了";
+        StatusText = recyclable ? $"「{ep.DisplayName}」进回收站了" : $"已删除「{ep.DisplayName}」";
 
         // 这一部已经一集不剩了，卡片也一起收走
         if (card is not null && card.Series.Files.Count == 0)
@@ -819,6 +960,7 @@ public sealed class MainViewModel : ObservableObject
             SelectedCard = null;
             CardsView.Refresh();
             UpdateCounters();
+            SaveCache();
         }
     }
 
@@ -834,15 +976,24 @@ public sealed class MainViewModel : ObservableObject
         }
 
         var owner = Application.Current?.MainWindow;
-        var headline = $"把《{card.Title}》整个删到回收站？";
-        var detail = $"一共 {files.Count} 个视频文件\n{card.FolderPath}";
-        if (!ConfirmDialog.Ask(owner, headline, detail, $"删掉这 {files.Count} 个"))
+        var recyclable = RecycleBin.AllProbablyRecyclable(files);
+        var headline = recyclable
+            ? $"把《{card.Title}》整个删到回收站？"
+            : $"永久删除《{card.Title}》？（磁盘不支持回收站）";
+        var detail = recyclable
+            ? $"一共 {files.Count} 个视频文件\n{card.FolderPath}"
+            : $"一共 {files.Count} 个视频文件\n{card.FolderPath}\n\n⚠ 位于移动磁盘或网络位置，删除后无法从回收站还原！";
+        var confirmText = recyclable ? $"删掉这 {files.Count} 个" : $"永久删除 {files.Count} 个";
+
+        if (!ConfirmDialog.Ask(owner, headline, detail, confirmText))
         {
             StatusText = "那就先留着";
             return;
         }
 
-        StatusText = $"正在把 {files.Count} 个文件送进回收站……";
+        StatusText = recyclable
+            ? $"正在把 {files.Count} 个文件送进回收站……"
+            : $"正在删除 {files.Count} 个文件……";
         var result = await Task.Run(() => RecycleBin.MoveToRecycleBin(files));
 
         // 以「文件还在不在」为准：SHFileOperation 有时返回非零但已经删掉了一部分
@@ -865,7 +1016,10 @@ public sealed class MainViewModel : ObservableObject
             IsDetailOpen = false;
             CardsView.Refresh();
             UpdateCounters();
-            StatusText = $"《{card.Title}》的 {deleted} 个文件进回收站了";
+            SaveCache();
+            StatusText = recyclable
+                ? $"《{card.Title}》的 {deleted} 个文件进回收站了"
+                : $"已删除《{card.Title}》的 {deleted} 个文件";
         }
         else
         {
@@ -902,11 +1056,14 @@ public sealed class MainViewModel : ObservableObject
             _host.Settings.Recent.RemoveAll(r => string.Equals(r, p, StringComparison.OrdinalIgnoreCase));
         }
 
+        RebuildRecentLookup();
+        RefreshAllCardRecentRanks();
+
         // 详情抽屉里的集数、季标签跟着变；首集也可能换人了
         if (_selectedCard is not null)
         {
             Raise(nameof(SelectedCountText), nameof(SelectedSeasonLabel),
-                  nameof(SelectedCoverPath), nameof(SelectedHasCover));
+                  nameof(SelectedCoverPath), nameof(SelectedHasCover), nameof(SelectedCoverRevision));
         }
 
         UpdateCounters();
@@ -981,18 +1138,29 @@ public sealed class MainViewModel : ObservableObject
     {
         if (item is null) return;
         _host.Settings.Roots.RemoveAll(r => string.Equals(r.Path, item.Path, StringComparison.OrdinalIgnoreCase));
-        _host.Save();
-        SyncRoots();
-        Raise(nameof(TotalText));
-        StatusText = $"已移除 {item.Name}";
 
         // 顺手把已扫描的条目清掉，避免显示不存在的路径
-        foreach (var card in Cards.Where(c => string.Equals(c.RootPath, item.Path, StringComparison.OrdinalIgnoreCase)).ToList())
+        if (_selectedCard is not null &&
+            string.Equals(_selectedCard.RootPath, item.Path, StringComparison.OrdinalIgnoreCase))
         {
-            Cards.Remove(card);
+            SelectedCard = null;
+            IsDetailOpen = false;
         }
-        CardsView.Refresh();
+
+        _suppressCounterUpdates = true;
+        try
+        {
+            Cards.RemoveAll(c => string.Equals(c.RootPath, item.Path, StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            _suppressCounterUpdates = false;
+        }
+
+        SyncRoots();
         UpdateCounters();
+        SaveCache();
+        StatusText = $"已移除 {item.Name}";
     }
 
     private void SyncRoots()
@@ -1055,21 +1223,32 @@ public sealed class MainViewModel : ObservableObject
             SortDesc = mode == "集数";
         }
 
+        ApplySortDescriptions();
+        CardsView.Refresh();
+    }
+
+    private void ApplySortDescriptions()
+    {
         CardsView.SortDescriptions.Clear();
-        switch (mode)
+        if (_section == NavSection.Recent)
         {
-            case "集数":
-                CardsView.SortDescriptions.Add(new SortDescription(nameof(SeriesCardViewModel.Count), SortDesc ? ListSortDirection.Descending : ListSortDirection.Ascending));
-                break;
-            case "文件夹":
-                CardsView.SortDescriptions.Add(new SortDescription(nameof(SeriesCardViewModel.Subtitle), SortDesc ? ListSortDirection.Descending : ListSortDirection.Ascending));
-                break;
-            default:
-                CardsView.SortDescriptions.Add(new SortDescription(nameof(SeriesCardViewModel.Title), SortDesc ? ListSortDirection.Descending : ListSortDirection.Ascending));
-                break;
+            CardsView.SortDescriptions.Add(new SortDescription(nameof(SeriesCardViewModel.RecentRank), ListSortDirection.Ascending));
+            return;
         }
 
-        CardsView.Refresh();
+        var dir = SortDesc ? ListSortDirection.Descending : ListSortDirection.Ascending;
+        switch (SortMode)
+        {
+            case "集数":
+                CardsView.SortDescriptions.Add(new SortDescription(nameof(SeriesCardViewModel.Count), dir));
+                break;
+            case "文件夹":
+                CardsView.SortDescriptions.Add(new SortDescription(nameof(SeriesCardViewModel.Subtitle), dir));
+                break;
+            default:
+                CardsView.SortDescriptions.Add(new SortDescription(nameof(SeriesCardViewModel.Title), dir));
+                break;
+        }
     }
 
     private void SetCardSize(object? parameter)
@@ -1088,20 +1267,15 @@ public sealed class MainViewModel : ObservableObject
 
         if (_section == NavSection.Recent)
         {
-            var recentSet = _host.Settings.Recent;
-            if (recentSet.Count == 0) return false;
-            return card.Series.Files.Any(f => recentSet.Contains(f.FullPath, StringComparer.OrdinalIgnoreCase));
+            if (card.RecentRank == int.MaxValue) return false;
         }
 
-        if (_searchText.Length == 0) return true;
+        if (_searchTokens.Length == 0) return true;
 
-        var q = _searchText.Trim();
-        if (q.Length == 0) return true;
-
-        // 多个关键词空格分隔，全部命中才算
-        foreach (var token in q.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        // 多个关键词空格分隔，全部命中才算（「最近播放」同样支持搜索过滤）
+        foreach (var token in _searchTokens)
         {
-            if (!card.SearchText.Contains(token.ToLowerInvariant(), StringComparison.Ordinal)) return false;
+            if (!card.SearchText.Contains(token, StringComparison.Ordinal)) return false;
         }
         return true;
     }
@@ -1119,8 +1293,7 @@ public sealed class MainViewModel : ObservableObject
             _cardSize = preset;
         }
 
-        CardsView.SortDescriptions.Clear();
-        CardsView.SortDescriptions.Add(new SortDescription(nameof(SeriesCardViewModel.Title), ListSortDirection.Ascending));
+        ApplySortDescriptions();
     }
 
     private async Task ResetTitleAsync(SeriesCardViewModel? card)
@@ -1129,7 +1302,6 @@ public sealed class MainViewModel : ObservableObject
         _host.Settings.TitleOverrides.Remove(card.Key);
         _host.Save();
         card.UpdateTitle(card.Series.OriginalTitle);
-        card.Series.Title = card.Series.OriginalTitle;
         Raise(nameof(SelectedTitle));
         CardsView.Refresh();
         SaveCache();
@@ -1143,7 +1315,6 @@ public sealed class MainViewModel : ObservableObject
         if (t.Length == 0 || t == card.Title) return;
 
         card.UpdateTitle(t);
-        card.Series.Title = t;
         _host.Settings.TitleOverrides[card.Key] = t;
         _host.Save();
         Raise(nameof(SelectedTitle));
